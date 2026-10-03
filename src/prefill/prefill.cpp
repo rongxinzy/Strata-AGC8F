@@ -3,6 +3,7 @@
 #include "strata/prefill/pipeline.hpp"
 #include "strata/prefill/audit.hpp"
 #include "strata/prefill/callback_probe.hpp"
+#include "strata/prefill/boundary_probe.hpp"
 #include "strata/core/mtp.hpp"
 #include "strata/core/progress.hpp"
 #include "strata/core/on_device.hpp"
@@ -1509,6 +1510,40 @@ bool Prefill::run_local(const int64_t* tokens, int64_t n, int64_t pos0, std::str
         if ((pipeline && pipeline->stopped()) || (should_stop && should_stop())) { err = "cancelled"; return false; }
         if (std::getenv("STRATA_TRACE")) { std::fprintf(stderr, "strata trace: prompt chunk %lld of %lld\n", (long long) c0, (long long) n); std::fflush(stderr); }
         const int64_t T = std::min(m.T, n - c0), p0 = pos0 + c0;
+        // Opt-in GDN45 boundary diagnostic, first warmup chunk only (default off: no CUDA, no I/O).
+        // It separates a bad initial state / different layer-44->45 inputs / the recurrence itself; the
+        // probe reads only, on this stage's own stream, and its runs are excluded from all timings.
+        detail::BoundaryProbe bprobe;
+        const bool bprobe_armed = detail::boundary_probe_want(LB, LE, p0);
+        int64_t bprobe_ord45 = -1;
+        if (bprobe_armed) {
+            int64_t bprobe_seen = 0;
+            for (int64_t bl = 0; bl < LE; ++bl) {
+                if (core::is_qsa_layer(g, bl)) continue;
+                if (bl == 45) bprobe_ord45 = bprobe_seen;
+                ++bprobe_seen;
+            }
+        }
+        bool bprobe_on = bprobe_armed &&
+            bprobe.start(m.device, LB, LE, p0, T, m.T, N, D, C, HV, ZV, gdn_floats,
+                         (uint64_t) g.ssm_state_size * g.ssm_v_heads * g.ssm_state_size,
+                         ss.gdn_ord0, ss.gdn_alloc, bprobe_ord45, err);
+        if (bprobe_armed && !bprobe_on) return false;   // a bad probe directory fails loudly
+        auto bprobe_capture = [&](const char* marker, const void* data, uint64_t bytes) {
+            if (!bprobe_on) return true;
+            const cudaError_t bprobe_sync = cudaStreamSynchronize(m.cs);
+            if (bprobe_sync != cudaSuccess) {
+                err = std::string("boundary probe owner stream sync: ") + cudaGetErrorString(bprobe_sync);
+                return false;
+            }
+            return bprobe.capture(marker, data, bytes, [&](const void* d, uint64_t at, uint8_t* host, size_t count) {
+                if (cudaMemcpy(host, (const uint8_t*) d + at, count, cudaMemcpyDeviceToHost) != cudaSuccess) {
+                    err = std::string("boundary probe D2H: ") + cudaGetErrorString(cudaGetLastError());
+                    return false;
+                }
+                return true;
+            }, err);
+        };
         if (pipeline) pipeline->event("chunk_start", pipeline_stage, p0, T, m.device);
         core::progress_at("reading the prompt (batched): preparing the chunk from token", p0);   // #251
         ++stats_.chunks;
@@ -1898,11 +1933,31 @@ bool Prefill::run_local(const int64_t* tokens, int64_t n, int64_t pos0, std::str
                     if (!native_proj(m.gemm, wg, m.mixed_h, m.z, T, v.name("attn_gate.weight"), err)) return false;
                     if (!bf16_proj(m.gemm, wa, m.mixed_bf, m.ab, T, v.name("ssm_alpha.weight"), err, 2 * HV, m.mixed_bf_lo)) return false;
                     if (!bf16_proj(m.gemm, wb, m.mixed_bf, m.ab + HV, T, v.name("ssm_beta.weight"), err, 2 * HV, m.mixed_bf_lo)) return false;
+                    if (bprobe_on && l == 45) {   // H1: the state before any layer-45 GDN kernel; H2: the dense inputs
+                        if (!bprobe_capture("l45_state_initial_before_gdn", state, gdn_floats * 4) ||
+                            !bprobe_capture("l45_mixed_f32_after_mix", m.mixed, (uint64_t) T * N * 4) ||
+                            !bprobe_capture("l45_mixed_bf16_after_mix", m.mixed_bf, (uint64_t) T * N * 2) ||
+                            !bprobe_capture("l45_mixed_f16_after_mix", m.mixed_h, (uint64_t) T * N * 2) ||
+                            !bprobe_capture("l45_qkv_after_proj", m.qkv, (uint64_t) T * C * 4) ||
+                            !bprobe_capture("l45_z_after_proj", m.z, (uint64_t) T * ZV * 4) ||
+                            !bprobe_capture("l45_ab_after_proj", m.ab, (uint64_t) T * 2 * HV * 4)) return false;
+                    }
                     pt.mark(kPfGdnConv, cs);   // "gdn" is the projections in; the rest on their own lines
                     gdn_gates(m.ab, (const float*) wdt->data, (const float*) wsa->data, m.gate, m.beta, T, m.cs);
                     gdn_conv(conv, m.qkv, (const float*) wc->data, m.hbuf, T, EPS, m.cs);
+                    if (bprobe_on && l == 45 &&   // the recurrence's actual inputs (the H2/H3 boundary)
+                        (!bprobe_capture("l45_h_after_conv", m.hbuf, (uint64_t) T * C * 4) ||
+                         !bprobe_capture("l45_gate_after_gates", m.gate, (uint64_t) T * HV * 4) ||
+                         !bprobe_capture("l45_beta_after_gates", m.beta, (uint64_t) T * HV * 4))) return false;
                     pt.mark(kPfGdnRec, cs);
                     gdn_recurrence(state, m.hbuf, m.gate, m.beta, m.z, (const float*) wnm->data, EPS, m.y, m.y_h, T, m.cs);
+                    if (bprobe_on && l == 45) {   // H3: the state and output after this first recurrence
+                        if (!bprobe_capture("l45_state_after_recurrence", state, gdn_floats * 4) ||
+                            !bprobe_capture("l45_y_f32_after_recurrence", m.y, (uint64_t) T * ZV * 4) ||
+                            !bprobe_capture("l45_y_f16_after_recurrence", m.y_h, (uint64_t) T * ZV * 2) ||
+                            !bprobe.finish(err)) return false;
+                        bprobe_on = false;   // first warmup chunk only; nothing later is captured
+                    }
                     pt.mark(kPfGdnOut, cs);
                     if (!native_proj(m.gemm, wo, m.y_h, m.bo, T, v.name("ssm_out.weight"), err)) return false;
                     ++gdn_index;
@@ -2746,6 +2801,8 @@ bool Prefill::run_local(const int64_t* tokens, int64_t n, int64_t pos0, std::str
                 }
                 if (half == 1 && strata::kernels::cvec().covers(l))   // --control-vector-scaled
                     strata::kernels::cvec_apply(m.R, l, T, D, nullptr, 0, nullptr, 0, false, m.cs);
+                if (bprobe_on && l == 44 && half == 1 &&   // H2: the residual entering layer 45
+                    !bprobe_capture("l44_residual_end", m.R, (uint64_t) T * D * 4)) return false;
             }
         }
         if (!ple_land()) return false;   // a stage that ends before layer 1: the rows land anyway, the next gather starts
