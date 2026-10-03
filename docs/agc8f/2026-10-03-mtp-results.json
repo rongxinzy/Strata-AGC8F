@@ -1,0 +1,419 @@
+{
+  "schema": 1,
+  "client_date": "2026-10-03",
+  "interpretation": "Runtime diagnostics; not identical-output or comprehensive quality-controlled acceleration. Opt-in, disabled by default.",
+  "tested_source_commit": "cb22b89933cce7189b21b99ce59ba5e668707959",
+  "archive_sha256": "a450a5a81ac84985d51da62fdeb120260091b842657128918d93a9689fea49ac",
+  "executable_sha256": "095a1787f8460fd5e9b5be35511e817f2c2ceeb1a870d2772bac472c0d40f68d",
+  "upstream_commit": "1678de333d0e0711bc414ad992b640e1a37dd814",
+  "ggml_commit": "3cf03257f219afbe7334045ff7c6a06ac68c627d",
+  "hardware": {
+    "type": "agc8f",
+    "gpu": "8 x RTX 4060 Ti 16GB, sm89",
+    "cpu": "Hygon C86-4G, 16 physical cores / 32 threads",
+    "ram_gib": 125,
+    "shared_cpu_uplink": "PCIe4 x8",
+    "measured_concurrent_H2D_GBs": 13.48,
+    "measured_concurrent_D2H_GBs": 13.54
+  },
+  "model": "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF IQ3_S",
+  "main_weights": [
+    {
+      "file": "Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf",
+      "bytes": 54817524224,
+      "sha256": "4c1eb2ceb4915e1192f4f386021897bde56a97f40a0bb78bb86465e0f7d2aca3"
+    },
+    {
+      "file": "Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00002-of-00002.gguf",
+      "bytes": 28800138432,
+      "sha256": "316b46f3a2dbd68c900f43136ab9449f9dcc3725dfd8c794847c204bc161e113"
+    }
+  ],
+  "protocol": {
+    "order": [
+      "mtp-validation-1-off",
+      "mtp-validation-2-on",
+      "mtp-validation-3-on",
+      "mtp-validation-4-off"
+    ],
+    "calibration_requests": 18,
+    "validation_requests": 36,
+    "heldout_unique_prompts": 9,
+    "requests_per_arm_per_input": 6,
+    "roles": {
+      "warmup": 11,
+      "correctness": 40,
+      "state-audit": 12,
+      "diagnostic-profile": 4,
+      "calibration": 18,
+      "validation": 36
+    },
+    "actual_output_tokens": 256,
+    "actual_prompt_tokens": {
+      "1K": [
+        1024
+      ],
+      "4K": [
+        4096
+      ],
+      "16K": [
+        16383,
+        16384
+      ]
+    },
+    "gpu_indices": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "cpu_affinity": "0-15",
+    "workers": 15,
+    "kv": "fp16",
+    "context": 32768,
+    "prefill_chunk": 2048,
+    "spec": 4,
+    "spec_min_p": 0.5,
+    "suffix_draft": 3,
+    "ple_io": "ram",
+    "adapt_swaps": 0,
+    "spec_split": false,
+    "prompt_reuse_tokens": 0,
+    "pipeline": 1,
+    "device_plan": 0,
+    "only_treatment": "STRATA_MTP_BATCH_MULTI=0/1",
+    "diagnostic_flags_in_performance": false,
+    "calibration_workload_sha256": "3ebb04f88c68bc42e08c3711a21c435fb29ac399f9002580ad93e5e388d8f57d",
+    "validation_workload_sha256": "b95b3fdb0b98ade86d32dd62d9d4eca116842b74d13071a868cfd6b046da6ceb",
+    "selection_sha256": "8ceeb6924bc39a1cf6d9cee268878b302c0929521b5c10159d269628a8fd5e72",
+    "selection_frozen_before_validation": true
+  },
+  "heldout_groups": [
+    {
+      "target": 1024,
+      "off": {
+        "count": 6,
+        "means": {
+          "prefill_s": 1.3080666666666667,
+          "decode_s": 4.134966666666667,
+          "client_s": 5.6056072806629045,
+          "first_visible_s": 1.4970307933011402
+        },
+        "total_input": 6144,
+        "total_output": 1536,
+        "draft_offered": 1306,
+        "draft_accepted": 898,
+        "draft_acceptance": 0.6875957120980092,
+        "sum_client_s": 33.633643683977425,
+        "aggregate_output_tok_s": 45.668557781972574,
+        "aggregate_total_tok_s": 228.3427889098629,
+        "requests_per_s": 0.17839280383583037,
+        "mean_per_request_output_tok_s": 45.744297347292424,
+        "aggregate_decode_tok_s": 61.91101903280155,
+        "aggregate_prefill_tok_s": 782.8347179042862,
+        "mean_per_request_decode_tok_s": 61.95964572781439
+      },
+      "on": {
+        "count": 6,
+        "means": {
+          "prefill_s": 1.2663833333333334,
+          "decode_s": 4.130583333333333,
+          "client_s": 5.405259585667712,
+          "first_visible_s": 1.3007354643195868
+        },
+        "total_input": 6144,
+        "total_output": 1536,
+        "draft_offered": 1318,
+        "draft_accepted": 900,
+        "draft_acceptance": 0.6828528072837633,
+        "sum_client_s": 32.43155751400627,
+        "aggregate_output_tok_s": 47.361277648680456,
+        "aggregate_total_tok_s": 236.8063882434023,
+        "requests_per_s": 0.18500499081515803,
+        "mean_per_request_output_tok_s": 47.40265213630618,
+        "aggregate_decode_tok_s": 61.97671838118104,
+        "aggregate_prefill_tok_s": 808.6019241146046,
+        "mean_per_request_decode_tok_s": 62.071126243423734
+      },
+      "on_over_off": {
+        "prefill_s": 0.9681336323327048,
+        "decode_s": 0.9989399350256751,
+        "client_s": 0.9642594129477619,
+        "first_visible_s": 0.8688768929403933
+      },
+      "text_self": {
+        "off": 1,
+        "on": 1
+      },
+      "text_self_denominator": 3,
+      "cross_same": 6,
+      "cross_total": 12
+    },
+    {
+      "target": 4096,
+      "off": {
+        "count": 6,
+        "means": {
+          "prefill_s": 2.6942166666666667,
+          "decode_s": 4.268716666666667,
+          "client_s": 6.988212228481037,
+          "first_visible_s": 2.745828914863523
+        },
+        "total_input": 24576,
+        "total_output": 1536,
+        "draft_offered": 1336,
+        "draft_accepted": 893,
+        "draft_acceptance": 0.6684131736526946,
+        "sum_client_s": 41.92927337088622,
+        "aggregate_output_tok_s": 36.63311754566509,
+        "aggregate_total_tok_s": 622.7629982763065,
+        "requests_per_s": 0.14309811541275425,
+        "mean_per_request_output_tok_s": 36.67426027961774,
+        "aggregate_decode_tok_s": 59.9711857193614,
+        "aggregate_prefill_tok_s": 1520.293468107613,
+        "mean_per_request_decode_tok_s": 60.139907275716425
+      },
+      "on": {
+        "count": 6,
+        "means": {
+          "prefill_s": 2.616816666666667,
+          "decode_s": 4.3223,
+          "client_s": 6.965077335868652,
+          "first_visible_s": 2.6687801069929264
+        },
+        "total_input": 24576,
+        "total_output": 1536,
+        "draft_offered": 1365,
+        "draft_accepted": 890,
+        "draft_acceptance": 0.652014652014652,
+        "sum_client_s": 41.79046401521191,
+        "aggregate_output_tok_s": 36.75479648756447,
+        "aggregate_total_tok_s": 624.831540288596,
+        "requests_per_s": 0.1435734237795487,
+        "mean_per_request_output_tok_s": 36.7745525709158,
+        "aggregate_decode_tok_s": 59.22772597922402,
+        "aggregate_prefill_tok_s": 1565.260590157252,
+        "mean_per_request_decode_tok_s": 59.30218256544342
+      },
+      "on_over_off": {
+        "prefill_s": 0.97127179823449,
+        "decode_s": 1.0125525626359209,
+        "client_s": 0.9966894404668913,
+        "first_visible_s": 0.9719396909787344
+      },
+      "text_self": {
+        "off": 0,
+        "on": 0
+      },
+      "text_self_denominator": 3,
+      "cross_same": 3,
+      "cross_total": 12
+    },
+    {
+      "target": 16384,
+      "off": {
+        "count": 6,
+        "means": {
+          "prefill_s": 5.726083333333333,
+          "decode_s": 4.258116666666667,
+          "client_s": 10.077518524505043,
+          "first_visible_s": 5.84592900351466
+        },
+        "total_input": 98302,
+        "total_output": 1536,
+        "draft_offered": 1336,
+        "draft_accepted": 911,
+        "draft_acceptance": 0.6818862275449101,
+        "sum_client_s": 60.46511114703026,
+        "aggregate_output_tok_s": 25.40307907918963,
+        "aggregate_total_tok_s": 1651.1670632214416,
+        "requests_per_s": 0.0992307776530845,
+        "mean_per_request_output_tok_s": 25.419963289713994,
+        "aggregate_decode_tok_s": 60.12047579720298,
+        "aggregate_prefill_tok_s": 2861.234409791451,
+        "mean_per_request_decode_tok_s": 60.36236939914285
+      },
+      "on": {
+        "count": 6,
+        "means": {
+          "prefill_s": 5.426583333333333,
+          "decode_s": 4.170866666666667,
+          "client_s": 9.693479560509635,
+          "first_visible_s": 5.549117751497154
+        },
+        "total_input": 98302,
+        "total_output": 1536,
+        "draft_offered": 1309,
+        "draft_accepted": 925,
+        "draft_acceptance": 0.706646294881589,
+        "sum_client_s": 58.16087736305781,
+        "aggregate_output_tok_s": 26.40950531766952,
+        "aggregate_total_tok_s": 1716.583458271803,
+        "requests_per_s": 0.10316213014714656,
+        "mean_per_request_output_tok_s": 26.42587826938648,
+        "aggregate_decode_tok_s": 61.378130844109144,
+        "aggregate_prefill_tok_s": 3019.149556964941,
+        "mean_per_request_decode_tok_s": 61.51834937247868
+      },
+      "on_over_off": {
+        "prefill_s": 0.9476954870257448,
+        "decode_s": 0.9795097206511486,
+        "client_s": 0.9618915149536508,
+        "first_visible_s": 0.9492277015613673
+      },
+      "text_self": {
+        "off": 1,
+        "on": 2
+      },
+      "text_self_denominator": 3,
+      "cross_same": 7,
+      "cross_total": 12
+    },
+    {
+      "target": "all",
+      "off": {
+        "count": 18,
+        "means": {
+          "prefill_s": 3.2427888888888887,
+          "decode_s": 4.2206,
+          "client_s": 7.557112677882994,
+          "first_visible_s": 3.3629295705597744
+        },
+        "total_input": 129022,
+        "total_output": 4608,
+        "draft_offered": 3978,
+        "draft_accepted": 2702,
+        "draft_acceptance": 0.6792357968828557,
+        "sum_client_s": 136.0280282018939,
+        "aggregate_output_tok_s": 33.87537157534011,
+        "aggregate_total_tok_s": 982.3710728326171,
+        "requests_per_s": 0.1323256702161723,
+        "mean_per_request_output_tok_s": 35.94617363887472,
+        "aggregate_decode_tok_s": 60.65488319196323,
+        "aggregate_prefill_tok_s": 2210.4087359645846,
+        "mean_per_request_decode_tok_s": 60.82064080089122
+      },
+      "on": {
+        "count": 18,
+        "means": {
+          "prefill_s": 3.1032611111111112,
+          "decode_s": 4.207916666666667,
+          "client_s": 7.354605494015333,
+          "first_visible_s": 3.1728777742698893
+        },
+        "total_input": 129022,
+        "total_output": 4608,
+        "draft_offered": 3992,
+        "draft_accepted": 2715,
+        "draft_acceptance": 0.6801102204408818,
+        "sum_client_s": 132.382898892276,
+        "aggregate_output_tok_s": 34.80812127969543,
+        "aggregate_total_tok_s": 1009.4204094196398,
+        "requests_per_s": 0.13596922374881026,
+        "mean_per_request_output_tok_s": 36.867694325536156,
+        "aggregate_decode_tok_s": 60.83770670363402,
+        "aggregate_prefill_tok_s": 2309.79238686185,
+        "mean_per_request_decode_tok_s": 60.96388606044861
+      },
+      "on_over_off": {
+        "prefill_s": 0.9569729074082324,
+        "decode_s": 0.9969948980397731,
+        "client_s": 0.9732031011711221,
+        "first_visible_s": 0.9434862395116261
+      },
+      "text_self": {
+        "off": 2,
+        "on": 3
+      },
+      "text_self_denominator": 9,
+      "cross_same": 16,
+      "cross_total": 36
+    }
+  ],
+  "correctness": {
+    "sanity_per_configuration": "4/5, 8 configurations",
+    "known_failed_arithmetic": {
+      "expression": "137*29+41",
+      "answer": 4032,
+      "correct": 4014
+    },
+    "heldout_same_arm_text_pairs": {
+      "off": "2/9",
+      "on": "3/9"
+    },
+    "heldout_cross_arm_same_text": "16/36 comparisons using the same 9 inputs",
+    "long_pair_covered_main_state_different_requests": 0,
+    "long_pair_covered_main_state_requests": 5,
+    "tail_pair_covered_main_state_different_requests": 4,
+    "tail_pair_covered_main_state_requests": 4,
+    "tail_different_fields": "Stage7 GDN45/46 hashes and residual/GDN summary hashes; text 4/4 same; cause unresolved",
+    "tail_triage": "No intended main GDN/R write found statically; synchronization exists, but pre/post-callback hashes, actual pointer aliasing and CUDA sanitizer remain untested. Warmup and token-fallback also differ; not isolated to the 64-row batch threshold."
+  },
+  "mtp_kv": {
+    "long_callbacks": 22,
+    "long_on_batched": 22,
+    "long_max_relative_l2": {
+      "k": 0.0005791485815730619,
+      "v": 0.0025389339907205236
+    },
+    "tail_callbacks": 7,
+    "tail_on_batched": 6,
+    "tail_on_token_fallback": 1,
+    "tail_paths": {
+      "63": "token",
+      "64": "batched",
+      "65": "batched"
+    },
+    "all_values_finite": true,
+    "bit_exact": false,
+    "coverage": "This callback newly written active resident paged fp16 MTP K/V only; no main QSA or cache-resume proof",
+    "tail_max_relative_l2": {
+      "k": 0.0010279737145808575,
+      "v": 0.005207487517164343
+    }
+  },
+  "profile": {
+    "scope": "One ON diagnostic boot only, excluded from performance; 4 requests excluding warmup",
+    "stage_window_samples": 3520,
+    "weighted_decode_ms_per_window": {
+      "total_ms": 39.45577272727273,
+      "verify_ms": 34.592772727272724,
+      "draft_ms": 3.9514772727272724,
+      "commit_ms": 0.9117272727272726
+    },
+    "component_share": {
+      "verify_ms": 0.8767480735046258,
+      "draft_ms": 0.10014953451908752,
+      "commit_ms": 0.02310757614682492
+    },
+    "legacy_spans_not_pure_kernels": true
+  },
+  "limits": [
+    "Known sanity4/5 is preserved; all speed differences are diagnostics, not quality-controlled ranking.",
+    "GPU profile scope is one ON diagnostic boot only; there is no OFF-profile measurement or profile A/B claim.",
+    "TTFT token unavailable in Strata stream; first_visible is client text/reasoning visibility, not engine token generation.",
+    "Throughput aggregates divide summed client/engine times; remote role span recorded separately; not concurrent machine throughput.",
+    "Calibration/validation only are performance. Warmup,QA,state-audit and profile never enter performance means.",
+    "Legacy GPU spans are per stage local globaltimer; hc0 norm includes PLE, boundary validity not established by window coverage.",
+    "Concurrent prefill log lines remain unassigned; nested wall times never summed; only request engine prompt_ms is performance prefill.",
+    "Stage host counters differenced from rounded cumulative averages; QA may include teacher-forced prompt windows.",
+    "Main GDN/activePLE/lastR partial hashes exclude main QSA and MTP KV. Separate MTP auditor owns MTP active KV numerical differences.",
+    "Only one ABBA; no statistical significance, reliable p95, production stability or global optimum claim.",
+    "Overall decode -0.30% is below same-arm boot variation (-2.68% OFF, +1.50% ON).",
+    "Tail main-state fingerprint differences are unresolved; this change is not numerically certified.",
+    "GPU sanitizer, cancellation, cache/checkpoint restoration, concurrent serving and other KV modes not validated.",
+    "Do not combine this incremental result with earlier pipeline results measured on different corpora/configurations."
+  ],
+  "closure": {
+    "weights_rehashed": true,
+    "runtime_hashes_verified": true,
+    "owned_servers_left": false,
+    "ports_18080_18081_closed": true,
+    "all_gpu_memory_mib": 2,
+    "all_gpu_utilization_percent": 0
+  }
+}
