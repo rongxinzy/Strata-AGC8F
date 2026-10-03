@@ -23,6 +23,8 @@
 
 namespace strata::prefill {
 
+namespace detail { class Pipeline; struct PipelineJob; }
+
 struct PrefillStats {
     int64_t tokens = 0;
     int64_t chunks = 0;
@@ -114,6 +116,11 @@ public:
     }
 
 private:
+    bool run_local(const int64_t* tokens, int64_t n, int64_t pos0, std::string& err,
+                   detail::Pipeline* pipeline = nullptr, size_t pipeline_stage = 0,
+                   const detail::PipelineJob* input = nullptr);
+    bool run_pipeline(const int64_t* tokens, int64_t n, int64_t pos0, std::string& err);
+    bool audit_state(int64_t n, int64_t pos0, std::string& err);
     int64_t stage_lb_ = 0, stage_le_ = -1;
     Prefill* next_ = nullptr;
     const float* hand_in_ = nullptr;    ///< the previous stage's rows of the chunk being read (host, pinned)
