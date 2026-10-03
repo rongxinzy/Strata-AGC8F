@@ -52,6 +52,7 @@
 #include "strata/core/native_dense.hpp"
 #include "strata/program/logits_selection.hpp"
 #include "strata/program/conv_cache.hpp"
+#include "mtp_prefill_audit_cuda.hpp"
 #include "strata/spec/draft_policy.hpp"
 #include "strata/spec/suffix_drafter.hpp"
 #include "strata/kernels/cvec.hpp"
@@ -4236,6 +4237,7 @@ int main(int argc, char** argv) {
         std::vector<int32_t> live;
         std::vector<ImgKey> live_imgs, req_imgs;
         bool live_ok = false;
+        int64_t decode_profile_seq = 0;   // decoded requests, including warmup/QA/cancel (not protocol errors)
         std::vector<ConvCheckpoint> checks;
         uint64_t check_clock = 0;   // the checkpoints' LRU clock; creation and every use advance it
         bool cvec_cached = true;   // the control vector's state the live session and the checkpoints were read with
@@ -4361,12 +4363,30 @@ int main(int argc, char** argv) {
             }
             return true;
         };
-        sp.on_chunk = [&](const float* R_rows, int64_t T, int64_t p0, std::string& e) -> bool {
+        const char* mtp_multi_env = std::getenv("STRATA_MTP_BATCH_MULTI");
+        const bool mtp_batch_multi = mtp_multi_env && std::strcmp(mtp_multi_env, "1") == 0;
+        const char* mtp_audit_env = std::getenv("STRATA_MTP_PREFILL_AUDIT");
+        const bool mtp_prefill_audit = mtp_audit_env && std::strcmp(mtp_audit_env, "1") == 0;
+        const char* mtp_audit_dir_env = std::getenv("STRATA_MTP_PREFILL_AUDIT_DIR");
+        const std::string mtp_audit_directory = mtp_audit_dir_env ? mtp_audit_dir_env : "";
+        if (mtp_prefill_audit && mtp_audit_directory.empty()) {
+            std::fprintf(stderr, "strata serve: MTP audit needs STRATA_MTP_PREFILL_AUDIT_DIR (unique per run)\n");
+            return 2;
+        }
+        uint64_t mtp_audit_sequence = 0; // only the last Prefill owner calls on_chunk
+        // Capture the pointer by value: the moved callback must not retain a
+        // reference to a temporary selection, nor use CUDA0's sp for CUDA-last KV.
+        strata::prefill::Prefill* const draft_prefill = multi_gpu ? &stages.back()->sp : &sp;
+        sp.on_chunk = [&, draft_prefill](const float* R_rows, int64_t T, int64_t p0, std::string& e) -> bool {
             std::vector<int32_t> nxt((size_t) T);
             for (int64_t t = 0; t < T; ++t) nxt[(size_t) t] = (int32_t) cur[(size_t) (p0 + t + 1)];
-            // E-9: batched through the prompt path when it can (one GPU: a layer split's drafter is on the last stage)
-            const bool batched = !multi_gpu && sp.draft_kv(mtp, R_rows, nxt.data(), T, p0, e);
+            // Default multi-GPU behavior remains the token path. The opt-in
+            // reuses E-9 on the actual last stage; it is not assumed bit-exact.
+            const bool batched = (!multi_gpu || mtp_batch_multi) &&
+                                 draft_prefill->draft_kv(mtp, R_rows, nxt.data(), T, p0, e);
             if (!e.empty() || (!batched && !mtp.prefill(R_rows, nxt.data(), T, p0, e))) return false;
+            if (mtp_prefill_audit && !strata::program::audit_mtp_prefill(mtp, g, T, p0, batched,
+                    mtp_audit_directory, mtp_audit_sequence++, e)) return false;
             if (std::getenv("STRATA_SNAPSHOT_VERIFY") != nullptr)
                 std::fprintf(stderr, "strata serve: DRAFT_PREFILL path=%s mode=%d cells=%lld\n",
                              batched ? "batched" : "token", mtp.kv_state().kv_mode, (long long) T);
@@ -5300,6 +5320,13 @@ int main(int argc, char** argv) {
             consumed.reserve((size_t) (n + max_new + S));
             for (int64_t i = 0; i < n - 1; ++i) consumed.push_back((int32_t) ids[(size_t) i]);
             const char* finish = "length";
+            // Presence flag: "0" also enables it. Reset every stage after prefill so
+            // teacher-forced prompt windows/earlier requests never leak into decode.
+            static const bool gpu_profile = std::getenv("STRATA_VERIFY_PROFILE") != nullptr;
+            if (gpu_profile) {
+                ++decode_profile_seq;
+                for (int st = 0; st < n_stages; ++st) stage_ver(st).profile_reset();
+            }
             const Clock::time_point d0 = Clock::now();
             // STRATA_DECODE_TIMING=1: where a request's decode time goes (one line per request)
             static const bool dec_timing = std::getenv("STRATA_DECODE_TIMING") != nullptr;
@@ -5442,8 +5469,26 @@ int main(int argc, char** argv) {
                              (d1.actq - ds0.actq) / w, (d1.jobs - ds0.jobs) / w, (d1.run - ds0.run) / w,
                              (d1.host - ds0.host) / w, dt_commit / w, dt_draft / w, (d1.misses - ds0.misses) / (w * L),
                              (d1.entries - ds0.entries) / (w * L), (d1.hits - ds0.hits) / (w * L), (d1.pcie - ds0.pcie) / (w * L));
-                const std::string pr = ver.profile_report();
-                if (!pr.empty()) std::fprintf(stderr, "strata decode GPU stages (ms/window):%s\n", pr.c_str());
+            }
+            // Drain all stages after the decode timer and final commit wait, independently
+            // of STRATA_DECODE_TIMING. Existing run() already copied/aggregated the GPU
+            // stamps after its sync; reporting adds no GPU work or synchronization.
+            if (gpu_profile) for (int st = 0; st < n_stages; ++st) {
+                strata::core::Verifier& v = stage_ver(st);
+                const int device = st == 0 || split_same ? 0 : stages[(size_t) st - 1]->dev;
+                const int64_t lb = st == 0 ? 0 : split_at[(size_t) st - 1];
+                const int64_t le = st + 1 < n_stages ? split_at[(size_t) st] : g.n_layers;
+                const int64_t profiled = v.profile_windows(), skipped = v.profile_skipped_windows();
+                const std::string pr = v.profile_report();
+                std::fprintf(stderr, "STRATA_VERIFY_STAGE_PROFILE schema=1 decode_seq=%lld status=%s stage=%d device=%d "
+                                     "lb=%lld le=%lld windows=%lld profiled=%lld skipped_g2=%lld enabled=%d unit=ms/window "
+                                     "coverage=%s categories=legacy%s\n",
+                             (long long) decode_profile_seq, cancelled ? "cancel" : "ok", st, device,
+                             (long long) lb, (long long) le, (long long) dec_windows,
+                             (long long) profiled, (long long) skipped, (int) v.profile_enabled(),
+                             v.profile_enabled() && profiled == dec_windows && skipped == 0 ? "complete" : "partial",
+                             pr.c_str());
+                v.profile_reset();   // also drain an all-skipped/no-window report
             }
             if (!cancelled) {
                 // a prompt stopped halfway leaves the session somewhere between two chunks: nothing to continue from

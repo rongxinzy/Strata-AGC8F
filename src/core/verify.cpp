@@ -858,6 +858,12 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
     return true;
 }
 
+void Verifier::profile_reset() {
+    for (auto& r : prof_sum_) for (double& d : r) d = 0;
+    prof_windows_ = 0;
+    prof_skipped_windows_ = 0;
+}
+
 std::string Verifier::profile_report() {
     if (!prof_on_ || prof_windows_ == 0) return std::string();
     static const char* names[kProfPer] = {"-", "hc-read0", "q8+qkv/q-idx gemv", "conv", "ab", "z", "rec", "q8+kv-idx",
@@ -879,8 +885,7 @@ std::string Verifier::profile_report() {
     }
     std::snprintf(b, sizeof b, " | total %.2f ms/window over %lld windows", total / 1e6 / (double) prof_windows_, (long long) prof_windows_);
     out += b;
-    for (auto& r : prof_sum_) for (double& d : r) d = 0;
-    prof_windows_ = 0;
+    profile_reset();
     return out;
 }
 
@@ -1129,6 +1134,7 @@ bool Verifier::run(int T, const int32_t* tokens, int64_t pos0, PoolMultiFn pool,
     if (se != cudaSuccess) { err = std::string("verify: ") + cudaGetErrorString(se); return false; }
     progress_at("verify window: waiting for the expert copies", (int64_t) T);
     cudaStreamSynchronize(copy_);   // no host function of this window may raise flag B in the next one
+    if (prof_on_ && G != 1) ++prof_skipped_windows_;
     if (prof_on_ && G == 1) {       // the window's GPU stage stamps
         cudaMemcpy(prof_h_.data(), prof_, prof_h_.size() * 8, cudaMemcpyDeviceToHost);
         const int64_t L = g.n_layers;
