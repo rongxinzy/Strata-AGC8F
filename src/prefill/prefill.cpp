@@ -2,6 +2,7 @@
 #include "strata/prefill/prefill.hpp"
 #include "strata/prefill/pipeline.hpp"
 #include "strata/prefill/audit.hpp"
+#include "strata/prefill/callback_probe.hpp"
 #include "strata/core/mtp.hpp"
 #include "strata/core/progress.hpp"
 #include "strata/core/on_device.hpp"
@@ -894,6 +895,7 @@ int64_t Prefill::chunk() const { return impl_->T; }
 bool Prefill::draft_kv(core::MtpDrafter& mtp, const float* R_rows, const int32_t* next_tokens, int64_t n, int64_t cell0,
                        std::string& err) {
     Impl& m = *impl_;
+    detail::callback_probe_draft_path("draft_kv_declined");
     static const bool off = [] { const char* v = std::getenv("STRATA_MTP_BATCH"); return v != nullptr && v[0] == '0'; }();
     // A ring (KV streaming: the drafter's window, page p in slot p % n_slots over a host copy) takes the same appends
     // with its own page table and host copy, as a streamed main layer does; the cells written are those the window can
@@ -926,7 +928,7 @@ bool Prefill::draft_kv(core::MtpDrafter& mtp, const float* R_rows, const int32_t
         return false;
     // the cells the drafter's window can still reach
     const int64_t r0 = std::max<int64_t>(0, mtp.first_needed() - cell0);
-    if (r0 >= n) return true;
+    if (r0 >= n) { detail::callback_probe_draft_path("no_cells_needed"); return true; }
     // per row: emb/e2 (N), en16 (N half), hn/h2/Rm/gated (HCN), hn16/xn16 (HCN half), lo (LR) + lo16, grs, mixed (N) +
     // mixed_h, K and V (KV each), the token id
     // E-9: the drafter's Q8_0 matrices through Q8_1 x Q8_0 MMQ - its own pass's integer dot products (mmvq), so
@@ -1051,6 +1053,7 @@ bool Prefill::draft_kv(core::MtpDrafter& mtp, const float* R_rows, const int32_t
         std::fprintf(stderr, "strata draft kv: %lld cells from %lld (first needed %lld), batch %lld: drafter idle %.1f ms, "
                      "the batches %.1f ms, all %.1f ms\n", (long long) n, (long long) cell0, (long long) (cell0 + r0),
                      (long long) B, ms_idle, ms_since(tl0), ms_since(t0));
+    detail::callback_probe_draft_path(q8 ? "batched_q8" : "batched_f16");
     return true;
 }
 bool Prefill::set_peer(core::PeerExperts* peer, int64_t cap_rows, std::string& err) {
@@ -2803,7 +2806,45 @@ bool Prefill::run_local(const int64_t* tokens, int64_t n, int64_t pos0, std::str
             }
             const auto toc2 = Clock::now();
             if (on_stage_chunk && !on_stage_chunk(p0 + T, err)) return false;
-            if (on_chunk && !on_chunk(m.R, T, p0, err)) return false;
+            if (on_chunk) {
+                detail::CallbackProbe probe;
+                const bool probing = detail::callback_probe_enabled();
+                auto sample = [&](const char* phase) {
+                    // Only this stage owner is at this chunk. Never traverse another stage here.
+                    int device = -1;
+                    if (cudaGetDevice(&device) != cudaSuccess || device != m.device || cudaDeviceSynchronize() != cudaSuccess) {
+                        err = "callback probe: owning device sync failed"; return false;
+                    }
+                    return probe.sample(phase, [&](const void* data, uint64_t at, uint8_t* host, size_t count) {
+                        const cudaError_t status = cudaMemcpy(host, (const uint8_t*) data + at, count, cudaMemcpyDeviceToHost);
+                        if (status != cudaSuccess) { err = std::string("callback probe D2H: ") + cudaGetErrorString(status); return false; }
+                        return true;
+                    }, err);
+                };
+                if (probing) {
+                    std::vector<detail::CallbackProbeRange> ranges;
+                    int64_t ordinal = 0;
+                    for (int64_t layer = 0; layer < LE; ++layer) {
+                        if (core::is_qsa_layer(g, layer)) continue;
+                        if (layer >= LB && (layer == 45 || layer == 46)) {
+                            const int64_t row = ordinal - ss.gdn_ord0;
+                            if (!ss.gdn_state || row < 0 || row >= ss.gdn_alloc) { err = "callback probe: GDN outside initialized carve"; return false; }
+                            ranges.push_back({layer == 45 ? "gdn45" : "gdn46", layer, ordinal, row,
+                                ss.gdn_state + (size_t) row * gdn_floats, gdn_floats * sizeof(float),
+                                (uint64_t) g.ssm_state_size * g.ssm_v_heads * g.ssm_state_size});
+                        }
+                        ++ordinal;
+                    }
+                    if (T <= 0 || T > m.T || !m.R) { err = "callback probe: residual outside active chunk"; return false; }
+                    ranges.push_back({"lastR", -1, -1, T - 1, m.R + (size_t) (T - 1) * D, (uint64_t) D * sizeof(float)});
+                    if (!probe.start(m.device, LB, LE, p0, T, m.T, pipeline != nullptr, std::move(ranges), err,
+                            m.region, m.region_bytes, m.R, (uint64_t) T * D * sizeof(float)) ||
+                        !sample("before") || !sample("before_repeat")) return false;
+                }
+                const bool callback_ok = on_chunk(m.R, T, p0, err);
+                if (probing && (!sample("after") || !probe.finish(callback_ok, err))) return false;
+                if (!callback_ok) return false;
+            }
             host_sync_ms += std::chrono::duration<double, std::milli>(toc2 - toc).count();
             host_chunk_ms += ms_since(toc2);
         }
