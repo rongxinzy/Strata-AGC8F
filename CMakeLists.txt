@@ -55,6 +55,10 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/CMakeLists.txt AND EXISTS ${CMAKE_CU
   set(_strata_tests_default ON)
 endif()
 option(STRATA_BUILD_TESTS "Build the test suite" ${_strata_tests_default})
+option(STRATA_BUILD_AGC8F_TESTS "Build host-only AGC8F queue and audit regressions" OFF)
+if(STRATA_BUILD_AGC8F_TESTS)
+  enable_testing()
+endif()
 option(STRATA_BUILD_CONVERSATION_TESTS "Build standalone conversation cache tests" OFF)
 option(STRATA_WERROR "Treat compiler warnings as errors" OFF)
 
@@ -829,6 +833,23 @@ else()
 endif()
 find_package(Threads REQUIRED)
 target_link_libraries(strata_kernels_cpu PUBLIC Threads::Threads)
+
+if(STRATA_BUILD_AGC8F_TESTS)
+  # Host queue/slot lifetime regressions. These do not validate CUDA kernels.
+  foreach(_test prefill_pipeline prefill_audit)
+    add_executable(${_test}_test tools/test_${_test}.cpp)
+    target_include_directories(${_test}_test PRIVATE include)
+    target_link_libraries(${_test}_test PRIVATE Threads::Threads)
+    # The regressions use assertions, including checked operations, in Release too.
+    if(MSVC)
+      target_compile_options(${_test}_test PRIVATE /UNDEBUG)
+    else()
+      target_compile_options(${_test}_test PRIVATE -UNDEBUG)
+    endif()
+    add_test(NAME ${_test}_test COMMAND ${_test}_test)
+    set_tests_properties(${_test}_test PROPERTIES TIMEOUT 30)
+  endforeach()
+endif()
 
 # ---- plan v0.3 P6: the i-quant models' CPU experts (IQ2_XS / IQ3_XXS files) ----
 #

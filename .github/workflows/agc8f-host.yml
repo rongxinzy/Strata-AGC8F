@@ -1,0 +1,15 @@
+name: AGC8F host regressions
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  host:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure host tests
+        run: cmake -S . -B build-agc8f-host -DCMAKE_BUILD_TYPE=Release -DSTRATA_ENABLE_CUDA=OFF -DSTRATA_NATIVE_EXPERTS=OFF -DSTRATA_BUILD_TESTS=OFF -DSTRATA_BUILD_AGC8F_TESTS=ON
+      - name: Build
+        run: cmake --build build-agc8f-host --target prefill_pipeline_test prefill_audit_test -j 2
+      - name: Test
+        run: ctest --test-dir build-agc8f-host -R '^prefill_(pipeline|audit)_test$' --output-on-failure
