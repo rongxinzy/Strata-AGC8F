@@ -811,6 +811,17 @@ if(STRATA_BUILD_AGC8F_TESTS)
     add_test(NAME ${_test}_test COMMAND ${_test}_test)
     set_tests_properties(${_test}_test PROPERTIES TIMEOUT 30)
   endforeach()
+  if(UNIX)
+    add_executable(callback_probe_test tools/test_callback_probe.cpp)
+    target_include_directories(callback_probe_test PRIVATE include)
+    target_link_libraries(callback_probe_test PRIVATE Threads::Threads)
+    target_compile_options(callback_probe_test PRIVATE -UNDEBUG)
+    foreach(_mode disabled missing existing failure normal)
+      add_test(NAME callback_probe_${_mode}
+        COMMAND callback_probe_test ${_mode} ${CMAKE_CURRENT_BINARY_DIR}/callback-probe-${_mode})
+      set_tests_properties(callback_probe_${_mode} PROPERTIES TIMEOUT 30)
+    endforeach()
+  endif()
 endif()
 
 # ---- plan v0.3 P6: the i-quant models' CPU experts (IQ2_XS / IQ3_XXS files) ----
