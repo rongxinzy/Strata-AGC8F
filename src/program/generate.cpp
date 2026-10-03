@@ -24,6 +24,7 @@
 #include "strata/core/remote_experts.hpp"
 #include "strata/core/on_device.hpp"
 #include "strata/core/peer_experts.hpp"
+#include "strata/core/stage_dense_scope.hpp"
 #include "strata/core/layer.hpp"
 #include "strata/core/layout.hpp"
 #include "strata/core/session.hpp"
@@ -725,6 +726,7 @@ struct GpuStage {
     int64_t lb = 0, le = 0;
     double pcie_frac = 0.0;
     strata::core::WeightTable wt;
+    void* arena = nullptr;    ///< this stage's canonical weight arena, tracked so STRATA_STAGE_DENSE_SCOPE can replace it
     strata::core::NativeDense dense;
     strata::core::NativeHead head;
     strata::core::SessionState ss;
@@ -2294,6 +2296,11 @@ int main(int argc, char** argv) {
     // ---- layer split across GPUs: each later stage's own copy of the dense weights, its session and (the last) the
     // head, made on its device before the host arena is mapped (as the drafter below, for the same WDDM reason)
     std::vector<std::unique_ptr<GpuStage>> stages;
+    // STRATA_STAGE_DENSE_SCOPE=1 (exactly "1", see dense_scope_env_on): after the split search has set
+    // each stage's [lb, le), re-load that stage's canonical pool and native projections for ITS layers
+    // only, freeing the boot-time full copy. Default off: the full load above is kept, nothing below
+    // runs, and boot is byte-identical to before this option existed.
+    const bool stage_dense_scope = strata::core::dense_scope_env_on(std::getenv("STRATA_STAGE_DENSE_SCOPE"));
     for (size_t i = 0; multi_gpu && i < split_devs.size(); ++i) {
         stages.push_back(std::make_unique<GpuStage>());
         GpuStage& st = *stages.back();
@@ -2317,6 +2324,7 @@ int main(int argc, char** argv) {
                          (unsigned long long) (total_b >> 20));
             return 1;
         }
+        st.arena = arena_s;   // owned by the stage from here (freed only by the scoping step, if enabled)
         if (!o.native_dense_gguf.empty() && !st.dense.load(o.native_dense_gguf, st.wt, err, o.native_ple_key)) {
             std::fprintf(stderr, "strata generate: layer split, CUDA%d native dense projections: %s\n", st.dev,
                          err.c_str());
@@ -2628,6 +2636,84 @@ int main(int argc, char** argv) {
     for (size_t i = 0; i < stages.size(); ++i) {
         GpuStage& st = *stages[i];
         const strata::core::OnDevice on(st.dev);
+        // ---- STRATA_STAGE_DENSE_SCOPE=1: replace this stage's boot-time FULL copy with its own layers'
+        // weights. The split search above ran against the full-load free VRAM, so the placement is exactly
+        // the one the option-off boot produces. Nothing has captured a WeightRef or an arena address yet -
+        // the session, the head, the verifier and the prefill path are all made after this loop, and the
+        // only earlier st.wt consumer is the load itself - so replacing the table here is safe. The main
+        // device (CUDA0) keeps its full pool: its `wt`/`arena` are not in this vector.
+        if (stage_dense_scope) {
+            const uint64_t native_before = st.dense.weight_bytes();
+            std::set<std::string> all_names;
+            for (const auto& e : st.wt.all()) all_names.insert(e.first);
+            std::set<std::string> stage_skip;
+            std::string scope_why;
+            if (!strata::core::dense_scope_stage_skip(all_names, skip, st.lb, st.le, stage_skip, scope_why)) {
+                // an unparsable range is a REFUSAL to scope, not a boot failure: the stage keeps the full
+                // pool it already holds and the boot carries on as if the option were off
+                std::fprintf(stderr, "strata generate: layer split: CUDA%d keeps the full pool: %s\n", st.dev,
+                             scope_why.c_str());
+            } else {
+                uint64_t scoped_pool = 0;
+                if (!strata::core::WeightTable::pool_bytes(o.pack, scoped_pool, err,
+                                                           stage_skip.empty() ? nullptr : &stage_skip)) {
+                    std::fprintf(stderr, "strata generate: layer split, CUDA%d scoped pool: %s\n", st.dev,
+                                 err.c_str());
+                    return 1;
+                }
+                void* scoped_arena = nullptr;   // sized for the compacted pool, allocated while the full arena lives
+                if (cudaMalloc(&scoped_arena, scoped_pool) != cudaSuccess) {
+                    std::fprintf(stderr, "strata generate: layer split, CUDA%d scoped weights: the %llu MiB arena "
+                                 "does not fit beside the full pool\n", st.dev,
+                                 (unsigned long long) (scoped_pool >> 20));
+                    return 1;
+                }
+                strata::core::WeightTable scoped_wt;   // RAII: its rows die with it if the load below fails
+                if (!scoped_wt.load(o.pack, scoped_arena, scoped_pool, err,
+                                    stage_skip.empty() ? nullptr : &stage_skip)) {
+                    std::fprintf(stderr, "strata generate: layer split, CUDA%d scoped weights: %s\n", st.dev,
+                                 err.c_str());
+                    cudaFree(scoped_arena);
+                    return 1;
+                }
+                // Swap over, in the order that never leaves a live reader of a freed pointer: the old
+                // native matrices and scratch first (their WeightRefs die with the old table, replaced
+                // next), then the table itself, then the old arena. Any failure below stops the boot, so
+                // the dangling window is closed before a single kernel runs.
+                if (!st.dense.reset(err)) {
+                    std::fprintf(stderr, "strata generate: layer split, CUDA%d: %s\n", st.dev, err.c_str());
+                    cudaFree(scoped_arena);
+                    return 1;
+                }
+                st.wt = std::move(scoped_wt);
+                const cudaError_t free_error = cudaFree(st.arena);
+                st.arena = scoped_arena;
+                if (free_error != cudaSuccess) {
+                    std::fprintf(stderr, "strata generate: layer split, CUDA%d old weight arena free: %s\n",
+                                 st.dev, cudaGetErrorString(free_error));
+                    return 1;
+                }
+                if (!o.native_dense_gguf.empty() &&
+                    !st.dense.load(o.native_dense_gguf, st.wt, err, o.native_ple_key, st.lb, st.le)) {
+                    std::fprintf(stderr, "strata generate: layer split, CUDA%d scoped native dense: %s\n", st.dev,
+                                 err.c_str());
+                    return 1;
+                }
+                size_t sfb = 0, stb = 0;
+                cudaMemGetInfo(&sfb, &stb);
+                std::fprintf(stderr, "strata generate: layer split: CUDA%d scoped to layers [%lld, %lld): %llu MiB "
+                             "of canonical weights; %.2f GiB free\n", st.dev, (long long) st.lb,
+                             (long long) st.le, (unsigned long long) (scoped_pool >> 20),
+                             (double) sfb / 1073741824.0);
+                std::fprintf(stderr, "strata generate: dense scope CUDA%d canonical_before=%llu "
+                                     "canonical_after=%llu native_before=%llu native_after=%llu "
+                                     "native_tensors=%zu weight_bytes_saved=%llu\n", st.dev,
+                             (unsigned long long) pool_bytes, (unsigned long long) scoped_pool,
+                             (unsigned long long) native_before, (unsigned long long) st.dense.weight_bytes(),
+                             st.dense.tensor_count(), (unsigned long long)
+                                 (pool_bytes - scoped_pool + native_before - st.dense.weight_bytes()));
+            }
+        }
         void* sbuf_s = nullptr;
         if (cudaMalloc(&sbuf_s, strata::core::session_bytes(g, o.max_context, K, st.lb, st.le)) != cudaSuccess ||
             strata::core::session_init(g, o.max_context, K, sbuf_s, st.ss, st.lb, st.le) == 0) {
