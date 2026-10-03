@@ -836,7 +836,7 @@ target_link_libraries(strata_kernels_cpu PUBLIC Threads::Threads)
 
 if(STRATA_BUILD_AGC8F_TESTS)
   # Host queue/slot lifetime regressions. These do not validate CUDA kernels.
-  foreach(_test prefill_pipeline prefill_audit)
+  foreach(_test prefill_pipeline prefill_audit mtp_prefill_audit)
     add_executable(${_test}_test tools/test_${_test}.cpp)
     target_include_directories(${_test}_test PRIVATE include)
     target_link_libraries(${_test}_test PRIVATE Threads::Threads)

@@ -10,6 +10,6 @@ jobs:
       - name: Configure host tests
         run: cmake -S . -B build-agc8f-host -DCMAKE_BUILD_TYPE=Release -DSTRATA_ENABLE_CUDA=OFF -DSTRATA_NATIVE_EXPERTS=OFF -DSTRATA_BUILD_TESTS=OFF -DSTRATA_BUILD_AGC8F_TESTS=ON
       - name: Build
-        run: cmake --build build-agc8f-host --target prefill_pipeline_test prefill_audit_test -j 2
+        run: cmake --build build-agc8f-host --target prefill_pipeline_test prefill_audit_test mtp_prefill_audit_test -j 2
       - name: Test
-        run: ctest --test-dir build-agc8f-host -R '^prefill_(pipeline|audit)_test$' --output-on-failure
+        run: ctest --test-dir build-agc8f-host -R '^(prefill_(pipeline|audit)|mtp_prefill_audit)_test$' --output-on-failure
