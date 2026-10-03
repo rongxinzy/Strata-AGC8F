@@ -48,6 +48,67 @@ A/B跨臂输出文本只有10/36一致。部分state比较只覆盖chunk1024的G
 GPU取消、cache/checkpoint恢复、非零起点、并发原型与长期稳定性尚未验收。
 CPU绑核候选出现跨启动部分state差异，未集成。
 
+## 新候选：末 stage batched MTP prefill
+
+多卡 serve 原先逐 token 填充 MTP KV。新路径复用实际末 stage 的
+`Prefill::draft_kv`，按值捕获对象指针；只在精确环境值下启用：
+
+```sh
+STRATA_MTP_BATCH_MULTI=1
+```
+
+默认保持原多卡行为；已有 `STRATA_MTP_BATCH=0` 仍禁用 batch。
+不支持的条件回退，真实错误直接传播。主模型与 MTP 权重、量化和 KV 编码保持固定；
+batch 与逐 token 计算顺序不同，不能假定逐位一致。
+
+`STRATA_MTP_PREFILL_AUDIT=1` 配合每次运行独占的
+`STRATA_MTP_PREFILL_AUDIT_DIR`，导出本次 callback 新写的活动 MTP K/V。
+只支持未旋转、resident paged FP16，按真实页表提取，排除无效早期行和页 padding；
+每次 D2H 不超过64KiB，记录真实小端 FP16 bits、区间、页映射和有限值统计。
+先写 partial、最后发布 complete 元数据；已存在的 chunk 目录拒绝覆盖。
+审计同步、复制和写盘全部排除正式计时。
+
+同新构建的八卡两臂审计中，长输入22个 chunk 确认从 token 切到 batched，
+K/V 全部有限；最大相对 L2 差异分别约0.058%和0.254%。单独2112/2113/2114输入
+确认2048后63 token尾部回退、64/65 token尾部走batch。长输入诊断中覆盖的5请求主状态指纹一致；单独tail诊断4/4请求在末卡
+GDN45/46及residual/GDN summary指纹有差异，文本4/4相同，原因未定位。
+不能称全面状态通过。原五题 sanity 仍4/5。此处不覆盖主 QSA KV、
+cache/checkpoint恢复、CUDA sanitizer、取消或完整质量评估。
+
+性能校准18请求与 A/B/B/A 留出36请求使用独立新语料，同二进制、八卡、
+pipeline=1、chunk2048，只有新开关不同；关闭所有审计/profile/trace。每臂每档
+三种语料各两次，实际输出均256 token、prompt reuse为0。
+
+| 输入 | Prefill均值(s)，OFF → ON | 减少 | 客户端总耗时均值(s)，OFF → ON | 减少 | Decode均值(s)，OFF → ON |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 约1K | 1.3081 → 1.2664 | 3.19% | 5.6056 → 5.4053 | 3.57% | 4.1350 → 4.1306 |
+| 约4K | 2.6942 → 2.6168 | 2.87% | 6.9882 → 6.9651 | 0.33% | 4.2687 → 4.3223 |
+| 约16K | 5.7261 → 5.4266 | 5.23% | 10.0775 → 9.6935 | 3.81% | 4.2581 → 4.1709 |
+| 合计 | 3.2428 → 3.1033 | 4.30% | 7.5571 → 7.3546 | 2.68% | 4.2206 → 4.2079 |
+
+总体prefill减少4.30%、客户端总耗时减少2.68%；decode只变化−0.30%，小于
+两次相同开关启动间−2.68%/+1.50%的变化，不能宣称稳定decode提升。
+1K OFF两次启动首可见延时变化24.02%，短请求收益也须保留该波动。
+留出文本OFF自一致2/9、ON3/9，跨开关16/36相同；接受率及输出内容会影响decode。
+这是一轮ABBA的运行耗时诊断，不是相同输出/全面质量受控加速。
+实现构建固定`cb22b89933cce7189b21b99ce59ba5e668707959`，后续仅补文档，
+[原始精度汇总及限制](agc8f/2026-10-03-mtp-results.json)。不能将这次增量与
+不同语料、不同基线的此前42.2%流水结果相乘或直接相加。
+
+## 各 stage 的 decode profile
+
+`STRATA_VERIFY_PROFILE` 在构建 graph 前设置。服务在请求的 decode 边界 reset/drain
+所有 Verifier，输出 `STRATA_VERIFY_STAGE_PROFILE`：stage/device、层范围、窗口数、
+已采样窗口、G2遗漏和 coverage。报告在 decode 计时及 commit wait 之后进行；
+关闭 profile 不增加 GPU 工作。
+
+类别沿用原时间戳口径，`hc0 norm` 在主 stage 包含 PLE/历史及其它工作，
+不能当纯 norm kernel。不同 GPU 的局部时间不能推成跨卡完整关键路径。
+本轮只有一轮开启新候选的独立 profile，不宣称 profile A/B 加速。
+排除warmup后4请求、3520个stage窗口：verify占decode计时桶87.67%，draft10.01%。
+VRAM专家混合链占23.98%、HC第二读/router混合跨度10.68%、末卡head混合跨度5.45%。
+这些指向后续细分内核边界；各桶不能当单个kernel或完整跨卡关键路径。
+
 ## 构建与运行
 
 使用CUDA支持构建，ggml固定在 `3cf03257f219afbe7334045ff7c6a06ac68c627d`，
@@ -83,10 +144,10 @@ taskset -c 0-15 python -m serve.server --engine strata \
 ```sh
 cmake -S . -B build-agc8f-host -DSTRATA_ENABLE_CUDA=OFF \
   -DSTRATA_NATIVE_EXPERTS=OFF -DSTRATA_BUILD_TESTS=OFF -DSTRATA_BUILD_AGC8F_TESTS=ON
-cmake --build build-agc8f-host --target prefill_pipeline_test prefill_audit_test
-ctest --test-dir build-agc8f-host -R '^prefill_(pipeline|audit)_test$' --output-on-failure
+cmake --build build-agc8f-host --target prefill_pipeline_test prefill_audit_test mtp_prefill_audit_test
+ctest --test-dir build-agc8f-host -R '^(prefill_(pipeline|audit)|mtp_prefill_audit)_test$' --output-on-failure
 ```
 
-后续源码工作先测末stage MTP和逐stage decode，再验证batch MTP、native投影裁剪与
-GPU路由分组。P2P需核实switch/ACS实际路径后设计；既有13.5GB/s共享上行不能靠软件
+后续先定位tail末卡状态指纹差异，再细分native专家gate/up、SwiGLU、量化、down，
+以及HC/router和末卡head混合跨度；随后验收小T融合、native投影裁剪与GPU路由分组。P2P需核实switch/ACS实际路径后设计；既有13.5GB/s共享上行不能靠软件
 变成八条独立通路。新候选默认关闭，数值诊断与性能测量分离，所有失败保留。
