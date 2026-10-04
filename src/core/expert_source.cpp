@@ -1621,6 +1621,15 @@ void expert_pool_dispatch_multi(ExpertDispatch& d, const float* x_f, const int32
             if (ids[i] >= 0 && ids[i] < d.n_expert) d.usage[(size_t) d.layers * (size_t) d.n_expert + (size_t) ids[i]] += 1.0f;
     // ---- plan v0.3 P6: the GPU's share, decided and published FIRST so the GPU starts while the CPU works.
     // Distinct experts in routing order; resident ones and the last pcie_num/256 of the missed ones go to the GPU.
+    struct RemoteDrain {
+        ExpertDispatch& d;
+        ~RemoteDrain() { for (int r = 0; r < d.remote_count; ++r) {
+            static thread_local std::string error;
+            if (!d.remote[r]->finish(nullptr, error)) {
+                d.failed = true; d.fail = error.c_str(); d.fail_layer = d.layers;
+            }
+        } }
+    } remote_drain{d};
     const int64_t n = n_tok * k;
     int32_t kind[kMaxWindowEntries];       // per entry: -1 CPU, 0 VRAM, 1 PCIe
     if (d.plan != nullptr && n <= kMaxWindowEntries && n <= d.plan->cap) {
@@ -1666,6 +1675,9 @@ void expert_pool_dispatch_multi(ExpertDispatch& d, const float* x_f, const int32
                     ++miss_rank;
                 }
             }
+            // EP ownership must be decided BEFORE publishing the primary GPU plan.
+            if (kd == 0) for (int r = 0; r < d.remote_count; ++r)
+                if (d.remote[r]->ep_owns(d.layers, e, n_tok, k)) { kd = 2; break; }
             for (int64_t i = i0; i < n; ++i)
                 if (first_of[i] == i0) kind[i] = kd;
             if (kd != 0) continue;                 // the VRAM groups first; the PCIe groups below

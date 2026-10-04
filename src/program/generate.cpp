@@ -22,6 +22,7 @@
 #include "strata/core/expert_source.hpp"
 #include "strata/core/pinned.hpp"
 #include "strata/core/remote_experts.hpp"
+#include "strata/core/ep24_plan.hpp"
 #include "strata/core/on_device.hpp"
 #include "strata/core/stage_dense_scope.hpp"
 #include "strata/core/layer.hpp"
@@ -673,6 +674,8 @@ struct SplitDrive {
     const uint8_t* cache_base[kMax] = {};
     const uint64_t* cache_slot_off[kMax] = {};
     int pcie_num[kMax] = {};
+    bool ep24 = false;
+    strata::core::RemoteExperts* ep_remote[kMax][3] = {};
 };
 void drive_pool_split(void* user, const float* x_f, const int32_t* ids, int64_t n_tok, int64_t k, float* out,
                       int64_t layer) {
@@ -684,6 +687,11 @@ void drive_pool_split(void* user, const float* x_f, const int32_t* ids, int64_t 
     d.d.cache_base = s->cache_base[st];
     d.d.cache_slot_off = s->cache_slot_off[st];
     d.d.pcie_num = s->pcie_num[st];
+    if (s->ep24) {
+        // MTP layer48 and all non-model layers must never enter helper ownership.
+        d.d.remote_count = layer >= 0 && layer < 48 ? 3 : 0;
+        for (int r = 0; r < d.d.remote_count; ++r) d.d.remote[r] = s->ep_remote[st][r];
+    }
     drive_pool_multi(s->base, x_f, ids, n_tok, k, out, layer);
 }
 
@@ -1322,6 +1330,32 @@ int main(int argc, char** argv) {
     }
     if (o.resident_cpu_experts && (!o.mmap_experts || o.expert_profile.empty())) {
         std::fprintf(stderr, "strata generate: --resident-cpu-experts requires --mmap-experts and a static --expert-profile\n");
+        return 2;
+    }
+    const char* ep_env = std::getenv("STRATA_EP_L0");
+    const bool ep_l0 = ep_env && std::strcmp(ep_env, "1") == 0;
+    const char* ep24_env = std::getenv("STRATA_EP_STAGE_TOP3");
+    const bool ep24 = ep24_env && std::strcmp(ep24_env, "1") == 0;
+    if (ep_l0 && ep24) { std::fprintf(stderr, "EP modes are mutually exclusive\n"); return 2; }
+    // Bounded numerical test only: OFF retains all replica allocations/bindings.
+    const char* ep_test_env = std::getenv("STRATA_EP_TEST_SEQUENCE");
+    std::string ep_test_sequence;
+    if (ep_test_env) {
+        size_t n = 0;
+        while (n < 257 && ep_test_env[n]) ++n;
+        if (!(ep_l0 || ep24) || n == 0 || n > 256 ||
+            std::strspn(ep_test_env, "01") != n) {
+            std::fprintf(stderr, "STRATA_EP_TEST_SEQUENCE requires EP and 1..256 binary digits\n");
+            return 2;
+        }
+        ep_test_sequence.assign(ep_test_env, n);
+    }
+    size_t ep_test_request = 0;
+    const char* ep_dp = std::getenv("STRATA_VERIFY_DEVICE_PLAN");
+    if ((ep_l0 || ep24) && (!o.serve || o.spec_split || o.adapt_swaps != 0 || o.kv != "fp16" || o.kv_resident != 0 || o.kv != "fp16" || o.kv_resident != 0 ||
+                  (ep_dp && std::strcmp(ep_dp, "0") != 0) || o.no_pool ||
+                  o.expert_cache_remote[0] || o.expert_cache_remote[1] || o.expert_cache_remote[2])) {
+        std::fprintf(stderr, "EP L0 requires serve, DP0, no-spec-split, adapt-swaps=0, pool and no legacy remote cache\n");
         return 2;
     }
     const bool remote_caches = o.expert_cache_remote[0] > 0 || o.expert_cache_remote[1] > 0 ||
@@ -3017,7 +3051,7 @@ int main(int argc, char** argv) {
     if (multi_gpu)
         std::fprintf(stderr, "strata generate: layer split: CUDA0 runs layers 0-%lld\n", (long long) (split_at[0] - 1));
 
-    std::array<strata::core::RemoteExperts, 3> remote_experts;
+    std::array<strata::core::RemoteExperts, 7> remote_experts;
     const bool multi_remote = o.expert_cache_remote[1] > 0 || o.expert_cache_remote[2] > 0;
     if (o.expert_cache_remote[0] > 0) {
         if (o.expert_cache <= 0 || profile.empty() || o.no_pool) {
@@ -4312,6 +4346,67 @@ int main(int argc, char** argv) {
         // issue #31's thread dumps show the host stuck in that cudaMemcpyAsync on a driver lock for good.  The copy
         // kernel needs no host CUDA call there, and costs ~1-3% decode on IQ3_S (45.3 -> 44.8 tok/s, 8 requests).
         ver.set_pcie_mode(o.pcie_mode == "dma" ? 0 : o.pcie_mode == "direct" ? 1 : 2);
+        // Allocate only AFTER original prefill/cache/scratch decisions; never shrink a cache for EP.
+        if (ep_l0) {
+            bool eligible = multi_gpu && !split_same && n_stages == 8 && stages.size() == 7 &&
+                            g.n_layers == 48 && g.n_embd == 2560 && g.n_layers == 48 && g.n_embd == 2560 && g.n_expert == 512 && strata::kernels::cpu::expert_layout().native &&
+                            host_res.size() == (size_t)(g.n_layers * g.n_expert);
+            for (size_t st = 0; st < stages.size(); ++st) eligible &= stages[st]->dev == (int)st + 1;
+            for (int32_t slot : host_res) eligible &= slot >= 0;
+            for (const auto& p : pf_parts) eligible &= p.first < 0; // no prefill cache loans/revocation
+            if (!eligible) { std::fprintf(stderr, "EP L0 requires eight ordered GPUs, full residency and own prefill buffers\n"); return 2; }
+            std::vector<uint8_t> ep_claimed((size_t)(g.n_layers * g.n_expert), 0);
+            for (int r = 0; r < 3; ++r) {
+                std::vector<std::pair<int32_t,int32_t>> ranked;
+                for (int e = r + 1; e < 512; e += 4) ranked.emplace_back(0, e);
+                if (!remote_experts[(size_t)r].open(r + 1, 128, g.n_layers, g.n_expert,
+                        ranked, xcache, *srcp, ep_claimed, err, true)) {
+                    std::fprintf(stderr, "EP L0: %s\n", err.c_str()); return 1;
+                }
+                drive.d.remote[drive.d.remote_count++] = &remote_experts[(size_t)r];
+            }
+            std::fprintf(stderr, "EP L0 enabled: GPU0+1/2/3, G1 n>=4, all 384 replicas verified, DMA return\n");
+        }
+        if (ep24) {
+            bool eligible = multi_gpu && !split_same && n_stages == 8 && stages.size() == 7 &&
+                            g.n_layers == 48 && g.n_embd == 2560 && g.n_expert == 512 &&
+                            strata::kernels::cpu::expert_layout().native && host_res.size() == 48u * 512u;
+            for (int st = 1; st < 8 && eligible; ++st)
+                eligible &= stages[(size_t)st-1]->dev == st && split_at[(size_t)st-1] == st * 6;
+            for (int32_t slot : host_res) eligible &= slot >= 0;
+            for (const auto& p : pf_parts) eligible &= p.first < 0;
+            if (!eligible) { std::fprintf(stderr, "EP24 requires fixed 8x6 stages, full residency, own prefill buffers\n"); return 2; }
+            const auto plan = strata::core::ep24_plan([](int l) { return strata::kernels::cpu::expert_layout().blob_bytes(l); });
+            std::vector<const strata::core::ExpertCache*> primary(48);
+            for (int l = 0; l < 48; ++l) {
+                primary[(size_t)l] = stage_of(l) ? &stages[(size_t)stage_of(l)-1]->cache : &xcache;
+                for (int e = 0; e < 512; ++e) if (primary[(size_t)l]->slot_of(l,e) < 0) {
+                    std::fprintf(stderr, "EP24 actual primary residency mismatch layer=%d expert=%d\n",l,e); return 2;
+                }
+            }
+            std::array<std::vector<int>,7> ranks;
+            for (auto& v : ranks) v.assign(48,0);
+            for (int st = 0; st < 8; ++st) {
+                std::fprintf(stderr,"EP24_PLAN stage=%d primary=%d layers=%d,%d,%d helpers=%d,%d,%d rank0=primary\n",
+                    st,st,plan.layers[st][0],plan.layers[st][1],plan.layers[st][2],plan.helpers[st][0],plan.helpers[st][1],plan.helpers[st][2]);
+                for (int r = 0; r < 3; ++r) {
+                    const int dev = plan.helpers[st][r];
+                    split_drive.ep_remote[st][r] = &remote_experts[(size_t)dev-1];
+                    for (int l : plan.layers[st]) ranks[(size_t)dev-1][(size_t)l] = r+1;
+                }
+            }
+            std::vector<uint8_t> claimed(48*512,0);
+            for (int dev = 1; dev < 8; ++dev) {
+                std::vector<std::pair<int32_t,int32_t>> ranked;
+                for (int l = 0; l < 48; ++l) if (ranks[(size_t)dev-1][(size_t)l])
+                    for (int e = ranks[(size_t)dev-1][(size_t)l]; e < 512; e += 4) ranked.emplace_back(l,e);
+                if (!remote_experts[(size_t)dev-1].open(dev,(int)ranked.size(),48,512,ranked,xcache,*srcp,claimed,err,true,&ranks[(size_t)dev-1],&primary)) {
+                    std::fprintf(stderr,"EP24: %s\n",err.c_str()); return 1;
+                }
+            }
+            split_drive.ep24 = true;
+            std::fprintf(stderr,"EP24 enabled: frozen 24 layers, seven private DMA helpers, G1 n>=4\n");
+        }
         std::vector<int64_t> cur;
         // ---- the conversation cache (see ConvCheckpoint).  `live` is what the session holds right now: the tokens
         // it has consumed, so a request that starts with exactly them continues without any copy.  `checks` are the
@@ -4946,13 +5041,31 @@ int main(int argc, char** argv) {
             bool bad = false;
             for (int64_t t : ids) bad = bad || t < 0 || t >= n_vocab;
             if (bad) { std::printf("ERR a token id is outside the vocabulary\n"); continue; }
-            std::array<int64_t, 3> remote_before{};
-            std::array<int64_t, 3> launches_before{};
-            std::array<uint64_t, 3> compact_before{}, full_before{};
+            // Only validated requests consume sequence entries; no window is in flight here.
+            if (!ep_test_sequence.empty()) {
+                if (ep_test_request >= ep_test_sequence.size()) {
+                    std::printf("ERR EP test sequence exhausted\n");
+                    std::fflush(stdout);
+                    continue;
+                }
+                const bool active = ep_test_sequence[ep_test_request] == '1';
+                for (int r = 0; r < (ep24 ? 7 : 3); ++r) {
+                    if (!remote_experts[(size_t) r].ep_set_active(active)) {
+                        // Fail closed: never execute with a partially toggled helper set.
+                        std::fprintf(stderr, "EP test boundary has pending helper %d\n", r);
+                        return 2;
+                    }
+                }
+                std::fprintf(stderr, "EP_TEST_REQUEST index=%zu active=%d\n", ep_test_request, (int) active);
+                ++ep_test_request;
+            }
+            std::array<int64_t, 7> remote_before{};
+            std::array<int64_t, 7> launches_before{};
+            std::array<uint64_t, 7> compact_before{}, full_before{};
             // ms_begin/ms_wait are cumulative since boot; the log line used to print them next to per-request deltas,
             // so the host time read as if it belonged to this request.  Take deltas here like every other column.
-            std::array<double, 3> begin_before{}, wait_before{};
-            for (int r = 0; r < 3; ++r) if (o.expert_cache_remote[(size_t) r] > 0)
+            std::array<double, 7> begin_before{}, wait_before{};
+            for (int r = 0; r < (ep24 ? 7 : 3); ++r) if (ep24 || ep_l0 || o.expert_cache_remote[(size_t) r] > 0)
             {
                 remote_before[(size_t) r] = remote_experts[(size_t) r].computed();
                 launches_before[(size_t) r] = remote_experts[(size_t) r].launched_layers();
@@ -5759,7 +5872,7 @@ int main(int argc, char** argv) {
             if (sfx_windows > 0)
                 std::fprintf(stderr, "strata serve: suffix drafts: %lld windows, %lld of %lld drafts accepted\n",
                              (long long) sfx_windows, (long long) sfx_ok, (long long) sfx_drafts);
-            for (int r = 0; r < 3; ++r) if (o.expert_cache_remote[(size_t) r] > 0)
+            for (int r = 0; r < (ep24 ? 7 : 3); ++r) if (ep24 || ep_l0 || o.expert_cache_remote[(size_t) r] > 0)
                 std::fprintf(stderr, "strata serve: CUDA%d: %lld expert entries, %lld active layer launches, %.1f MiB returned "
                                      "(%.1f MiB with full rows) in this request; host %.0f ms staging+launching, %.0f ms "
                                      "waiting for it in this request\n", r + 1,

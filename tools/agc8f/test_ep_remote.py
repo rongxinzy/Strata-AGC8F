@@ -1,0 +1,142 @@
+from pathlib import Path
+import subprocess,json
+S=Path(__file__).resolve().parents[2]
+import tempfile
+_tmp=tempfile.TemporaryDirectory(prefix='strata-ep-test-');P=Path(_tmp.name)
+h=(S/'include/strata/core/remote_experts.hpp').read_text();c=(S/'src/core/remote_experts.cpp').read_text()
+policy=(S/"include/strata/core/ep24_plan.hpp").read_text()
+h='\n'.join(l for l in h.splitlines() if not l.startswith('#include') and l!='#pragma once')
+c='\n'.join(l for l in c.splitlines() if not l.startswith('#include'))
+stub=r'''
+#include <vector>
+#include <string>
+#include <utility>
+#include <algorithm>
+#include <chrono>
+#include <cstdlib>
+#include <cstring>
+#include <cstdint>
+#include <cassert>
+#include <cstdio>
+using cudaError_t=int; using cudaStream_t=void*;
+constexpr int cudaSuccess=0,cudaStreamNonBlocking=1,cudaHostAllocPortable=1,cudaHostAllocMapped=2,cudaDeviceScheduleSpin=1,cudaDeviceMapHost=2,cudaMemcpyHostToDevice=1,cudaMemcpyDeviceToHost=2;
+int current=0,verified=0,syncs=0,failcopy=0; size_t available=16ull<<30;
+int cudaGetDevice(int*p){*p=current;return 0;} int cudaSetDevice(int p){current=p;return 0;}
+const char* cudaGetErrorString(int){return "injected";}
+int cudaGetDeviceCount(int*p){*p=8;return 0;}int cudaInitDevice(int,int,int){return 0;}int cudaGetLastError(){return 0;}
+int cudaMemGetInfo(size_t*a,size_t*b){*a=*b=available;return 0;}
+int cudaStreamSynchronize(void*){++syncs;return 0;}int cudaStreamCreateWithFlags(void**p,int){*p=(void*)1;return 0;}int cudaStreamDestroy(void*){return 0;}
+int cudaFree(void*p){free(p);return 0;}int cudaFreeHost(void*p){free(p);return 0;}
+int cudaMalloc(void**p,size_t n){*p=calloc(1,n);return 0;}int cudaHostAlloc(void**p,size_t n,int){return cudaMalloc(p,n);}
+int cudaHostGetDevicePointer(void**p,void*q,int){*p=q;return 0;}
+int cudaMemcpyAsync(void*d,const void*s,size_t n,int,void*){if(failcopy){--failcopy;return 1;}memcpy(d,s,n);return 0;}
+namespace strata::kernels::cpu { constexpr int H=32,FF=32,MAXT=8;struct Fmt{int gu_type=18,d_type=20,n_embd=32,n_ff=32;};
+struct Layout {bool native=true;size_t max_blob=8;std::vector<Fmt>fmt=std::vector<Fmt>(48);size_t blob_bytes(int)const{return 8;}};Layout& expert_layout(){static Layout l;return l;} }
+namespace strata::core {
+struct ExpertSource {const uint8_t* blob(int,int){static uint8_t b[8]={};return b;}};
+struct ExpertCache {std::vector<std::pair<int,int>> entries;bool primary=false; int lb=0,le=48;
+void close(){entries.clear();}bool open_sized(const std::vector<int64_t>&,int64_t,int64_t,std::string&){return true;}
+bool open(int64_t,int64_t,int64_t,int64_t,std::string&){return true;}
+int slot_of(int64_t l,int64_t e)const{if(primary)return l>=lb&&l<le?e:-1;for(size_t i=0;i<entries.size();i++)if(entries[i]==std::make_pair((int)l,(int)e))return i;return -1;}
+int admit(int l,int e){entries.emplace_back(l,e);return entries.size()-1;}
+bool fill_slot_blocking(int,const uint8_t*,std::string&,int64_t){return true;}
+bool verify_slot(int,const uint8_t*,std::string&,int64_t){++verified;return true;}
+const uint8_t* device_slot(int)const{static uint8_t b[8]={};return b;}
+int64_t resident()const{return entries.size();}double gib()const{return 0;}};
+}
+namespace strata::kernels {
+size_t moe_hit_grouped_scratch_bytes(int,int,int){return 32;}size_t native_expert_scratch_bytes(int,int){return 32;}
+int native_expert_layout(int,int,int,int){return 0;}
+void quantize_q8_1_rows(const float*,int64_t,int64_t,uint8_t*,void*){}
+void quantize_q8_0_scaled(const float*,uint8_t*,float*,int64_t,void*){}
+void native_expert_grouped(int,unsigned long long*,int32_t*,int32_t*,int32_t*,int32_t*,int,int64_t n,uint8_t*,void*,float*out,void*){for(int i=0;i<n*32;i++)out[i]=(float)(i/32+1);}
+void moe_grouped_s2(unsigned long long*,int32_t*,int32_t*,int32_t*,int32_t*,int,int64_t,uint8_t*,float*,void*,float*,void*){}
+}
+'''
+test=r'''
+int main(){using namespace strata::core;ExpertCache primary;primary.primary=true;ExpertSource src;std::string err;
+RemoteExperts rs[3]; std::vector<uint8_t> claimed(48*512);int checks=0;
+for(int r=0;r<3;r++){std::vector<std::pair<int32_t,int32_t>> ranked;for(int e=r+1;e<512;e+=4)ranked.emplace_back(0,e);
+assert(rs[r].open(r+1,128,48,512,ranked,primary,src,claimed,err,true));assert(rs[r].resident()==128);checks+=2;}
+assert(verified==387);checks++;
+for(int t=1;t<=8;t++)for(int l: {0,1,47})for(int e=0;e<512;e++)for(int r=0;r<3;r++){assert(rs[r].ep_owns(l,e,t,10)==(t>=4&&l==0&&e%4==r+1));checks++;}
+float x[8*32]={},out[80*32];int32_t ids[80],kind[80],res[48*512];std::fill(res,res+48*512,0);
+for(int variant=0;variant<4;variant++){std::fill(out,out+80*32,-5);for(int i=0;i<80;i++){ids[i]=(i*7+variant)%512;kind[i]=(ids[i]%4)?2:0;}
+for(int r=0;r<3;r++)assert(rs[r].begin(0,x,ids,8,10,kind,res,err));
+for(int r=0;r<3;r++)assert(rs[r].finish(out,err));
+for(int i=0;i<80;i++){assert((out[i*32]>0)==(ids[i]%4!=0));checks++;}}
+// OFF keeps every replica and restores ownership with no refill.
+for(int r=0;r<3;r++) {
+const int before=verified; const auto resident=rs[r].resident();
+assert(rs[r].ep_set_active(false));
+for(int e=0;e<512;e++){assert(!rs[r].ep_owns(0,e,8,10));checks++;}
+assert(rs[r].begin(0,x,ids,8,10,kind,res,err));
+for(int i=0;i<80;i++){assert(!rs[r].owns(i));checks++;}
+assert(rs[r].finish(out,err));assert(rs[r].ep_set_active(true));
+assert(rs[r].resident()==resident && verified==before);
+assert(rs[r].ep_owns(0,r+1,8,10));
+assert(rs[r].begin(0,x,ids,8,10,kind,res,err));
+assert(!rs[r].ep_set_active(false));assert(!rs[r].ep_set_active(true));
+assert(rs[r].ep_owns(0,r+1,8,10));assert(rs[r].finish(out,err));checks+=11;
+}
+// partial enqueue failure retains buffer lease until explicit draining finish.
+failcopy=1;assert(!rs[0].begin(0,x,ids,8,10,kind,res,err));assert(!rs[0].begin(0,x,ids,8,10,kind,res,err));assert(!rs[0].ep_set_active(false));checks++;assert(rs[0].finish(nullptr,err));
+assert(rs[0].begin(0,x,ids,8,10,kind,res,err));assert(rs[0].finish(out,err));checks+=5;
+for(int r=0;r<3;r++) {assert(rs[r].begin(1,x,ids,8,10,kind,res,err));for(int i=0;i<80;i++){assert(!rs[r].owns(i));checks++;}assert(rs[r].finish(out,err));}
+
+// Actual production selection policy: largest blobs, deterministic ascending ties.
+auto plan=strata::core::ep24_plan([](int l){return l%6==5?20:10;});
+for(int st=0;st<8;st++){assert(plan.layers[st][0]==st*6+5);assert(plan.layers[st][1]==st*6);assert(plan.layers[st][2]==st*6+1);
+for(int r=0;r<3;r++){assert(plan.helpers[st][r]>0&&plan.helpers[st][r]!=st);for(int q=0;q<r;q++)assert(plan.helpers[st][q]!=plan.helpers[st][r]);}checks+=12;}
+ExpertCache primaries[8];std::vector<const ExpertCache*> by_layer(48);
+for(int st=0;st<8;st++){primaries[st].primary=true;primaries[st].lb=6*st;primaries[st].le=6*st+6;for(int l=6*st;l<6*st+6;l++)by_layer[l]=&primaries[st];}
+std::vector<std::vector<int>> ranks(7,std::vector<int>(48));
+for(int st=0;st<8;st++)for(int r=0;r<3;r++)for(int l:plan.layers[st])ranks[plan.helpers[st][r]-1][l]=r+1;
+RemoteExperts helpers[7];std::vector<uint8_t> used(48*512);int before_verify=verified,total_replicas=0;
+for(int dev=1;dev<=7;dev++){std::vector<std::pair<int32_t,int32_t>> ranked;
+for(int l=0;l<48;l++)if(ranks[dev-1][l])for(int e=ranks[dev-1][l];e<512;e+=4)ranked.emplace_back(l,e);
+assert(helpers[dev-1].open(dev,ranked.size(),48,512,ranked,primaries[0],src,used,err,true,&ranks[dev-1],&by_layer));total_replicas+=ranked.size();checks++;}
+assert(total_replicas==24*384);assert(verified-before_verify==total_replicas+7);checks+=2;
+for(int t=1;t<=8;t++)for(int l=-1;l<=48;l++)for(int e=0;e<512;e++)for(int dev=1;dev<=7;dev++){
+bool expected=l>=0&&l<48&&t>=4&&ranks[dev-1][l]>0&&e%4==ranks[dev-1][l];
+assert(helpers[dev-1].ep_owns(l,e,t,10)==expected);checks++;}
+// Repeated full-stage traversals retain rank rows while reusing each physical helper across layers.
+for(int repeat=0;repeat<3;repeat++)for(int st=0;st<8;st++)for(int l:plan.layers[st]){
+std::fill(out,out+80*32,-5);for(int i=0;i<80;i++){ids[i]=(i*7+repeat)%512;kind[i]=ids[i]%4?2:0;}
+for(int dev:plan.helpers[st])assert(helpers[dev-1].begin(l,x,ids,8,10,kind,res,err));
+for(int dev:plan.helpers[st])assert(helpers[dev-1].finish(out,err));
+for(int i=0;i<80;i++){assert((out[i*32]>0)==(ids[i]%4!=0));checks++;}}
+// All seven helpers retain their ranks and allocations across repeated sameboot OFF/ON.
+for(int repeat=0;repeat<4;repeat++)for(int dev=1;dev<=7;dev++) {
+const auto resident=helpers[dev-1].resident();const int before=verified;
+assert(helpers[dev-1].ep_set_active(repeat%2));
+for(int l=0;l<48;l++)for(int e=0;e<512;e++) {
+bool expected=repeat%2 && ranks[dev-1][l]>0 && e%4==ranks[dev-1][l];
+assert(helpers[dev-1].ep_owns(l,e,8,10)==expected);checks++;
+}
+assert(resident==helpers[dev-1].resident() && verified==before);checks+=2;
+}
+// Closing and reopening returns to default-active, including an unopened object.
+RemoteExperts reset;assert(reset.ep_set_active(false));reset.close();
+std::vector<std::pair<int32_t,int32_t>> reset_rank;for(int e=1;e<512;e+=4)reset_rank.emplace_back(0,e);
+std::vector<uint8_t> reset_claimed(48*512);
+assert(reset.open(1,128,48,512,reset_rank,primary,src,reset_claimed,err,true));
+assert(reset.ep_owns(0,1,8,10));assert(reset.ep_set_active(false));reset.close();
+std::fill(reset_claimed.begin(),reset_claimed.end(),0);
+assert(reset.open(1,128,48,512,reset_rank,primary,src,reset_claimed,err,true));assert(reset.ep_owns(0,1,8,10));checks+=6;
+// API refuses incorrect real-stage residency and capacity; no fallback or cache shrink.
+std::vector<std::pair<int32_t,int32_t>> one;for(int e=1;e<512;e+=4)one.emplace_back(47,e);
+std::vector<int> one_rank(48);one_rank[47]=1;std::vector<uint8_t> fresh(48*512);RemoteExperts bad;
+auto wrong=by_layer;wrong[47]=&primaries[0];assert(!bad.open(1,128,48,512,one,primaries[0],src,fresh,err,true,&one_rank,&wrong));checks++;
+available=512ull<<20;assert(!bad.open(1,128,48,512,one,primaries[0],src,fresh,err,true,&one_rank,&by_layer));available=16ull<<30;checks++;
+printf("PASS %d actual RemoteExperts host checks\\n",checks);}
+'''
+f=P/'actual_remote_host.cpp';f.write_text(stub+policy+h+c+test)
+results=[]
+for label,flags in [('plain',[]),('asan-ubsan',['-fsanitize=address,undefined','-fno-omit-frame-pointer'])]:
+ cmd=['clang++','-std=c++17','-O1',*flags,str(f),'-o',str(P/('host-'+label))]
+ p=subprocess.run(cmd,capture_output=True,text=True);assert p.returncode==0,p.stderr
+ p=subprocess.run([str(P/('host-'+label))],capture_output=True,text=True);assert p.returncode==0,p.stderr
+ results.append({'mode':label,'command':cmd,'stdout':p.stdout})
+(P/'host-results.json').write_text(json.dumps(results,indent=2))
+print(results)
