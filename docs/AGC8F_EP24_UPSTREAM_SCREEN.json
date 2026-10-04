@@ -1,0 +1,377 @@
+{
+  "status": "RAW_INTEGRITY_AUDITED_NOT_FULL_NUMERICAL_ACCEPTANCE",
+  "engine_sha256": "0bf32c52f8057b389c1d9453194b15c0e3afdce95d7013e40a77c84e67f56305",
+  "source_archive_sha256": "bad81088d143e8a76facbf20b18d7a4aa8c37a40d105450182de7a314436d7e0",
+  "api_requests": 32,
+  "performance_requests": 8,
+  "performance": [
+    {
+      "input_tokens": 1024,
+      "decode_ms_ABBA": [
+        4492.5,
+        4200.9,
+        4205.6,
+        4361.0
+      ],
+      "client_s_ABBA": [
+        5.984727788018063,
+        5.468428771011531,
+        5.477579977014102,
+        5.637465297942981
+      ],
+      "off_decode_tok_s": 57.83023662958152,
+      "on_decode_tok_s": 60.90525188841968,
+      "paired_decode_speed_gain_pct": [
+        6.941369706491485,
+        3.695073235685742
+      ],
+      "pooled_decode_speed_gain_pct": 5.3173139832272565,
+      "off_decode_speed_drift_pct": 3.0153634487502856,
+      "off_decode_abs_drift_pct": 2.9271007234279356,
+      "paired_client_elapsed_reduction_pct": [
+        8.626942365535928,
+        2.836120711682577
+      ],
+      "pooled_client_elapsed_reduction_pct": 5.81804426182011
+    },
+    {
+      "input_tokens": 16384,
+      "decode_ms_ABBA": [
+        4823.9,
+        4640.9,
+        4644.0,
+        4821.5
+      ],
+      "client_s_ABBA": [
+        10.478078993968666,
+        10.415121841011569,
+        10.360494513995945,
+        10.529075680067763
+      ],
+      "off_decode_tok_s": 53.08229829763411,
+      "on_decode_tok_s": 55.14329718144514,
+      "paired_decode_speed_gain_pct": [
+        3.943200672283398,
+        3.8221360895779544
+      ],
+      "pooled_decode_speed_gain_pct": 3.882648170685732,
+      "off_decode_speed_drift_pct": 0.04977704034012653,
+      "off_decode_abs_drift_pct": 0.04975227513007393,
+      "paired_client_elapsed_reduction_pct": [
+        0.6008463287338839,
+        1.601101285566331
+      ],
+      "pooled_client_elapsed_reduction_pct": 1.1021879098890075
+    }
+  ],
+  "whole_eight_performance": {
+    "decode_ms_ABBA": [
+      9316.4,
+      8841.8,
+      8849.6,
+      9182.5
+    ],
+    "client_s_ABBA": [
+      16.46280678198673,
+      15.8835506120231,
+      15.838074491010047,
+      16.166540978010744
+    ],
+    "off_decode_tok_s": 55.354642708485365,
+    "on_decode_tok_s": 57.88123042834371,
+    "paired_decode_speed_gain_pct": [
+      5.367685312945336,
+      3.7617519435906743
+    ],
+    "pooled_decode_speed_gain_pct": 4.564364606531979,
+    "off_decode_speed_drift_pct": 1.4582085488701324,
+    "off_decode_abs_drift_pct": 1.4372504400841488,
+    "paired_client_elapsed_reduction_pct": [
+      3.5185747948973,
+      2.031767262072126
+    ],
+    "pooled_client_elapsed_reduction_pct": 2.7819209370686937
+  },
+  "trajectory": [
+    {
+      "label": "warmup",
+      "all4_equal": true,
+      "draft_tuples": [
+        [
+          110,
+          58
+        ],
+        [
+          110,
+          58
+        ],
+        [
+          110,
+          58
+        ],
+        [
+          110,
+          58
+        ]
+      ]
+    },
+    {
+      "label": "zh-arithmetic",
+      "all4_equal": true,
+      "draft_tuples": [
+        [
+          7,
+          4
+        ],
+        [
+          7,
+          4
+        ],
+        [
+          7,
+          4
+        ],
+        [
+          7,
+          4
+        ]
+      ]
+    },
+    {
+      "label": "en-arithmetic",
+      "all4_equal": true,
+      "draft_tuples": [
+        [
+          4,
+          4
+        ],
+        [
+          4,
+          4
+        ],
+        [
+          4,
+          4
+        ],
+        [
+          4,
+          4
+        ]
+      ]
+    },
+    {
+      "label": "zh-retrieval",
+      "all4_equal": true,
+      "draft_tuples": [
+        [
+          6,
+          6
+        ],
+        [
+          6,
+          6
+        ],
+        [
+          6,
+          6
+        ],
+        [
+          6,
+          6
+        ]
+      ]
+    },
+    {
+      "label": "code-correctness",
+      "all4_equal": true,
+      "draft_tuples": [
+        [
+          18,
+          18
+        ],
+        [
+          18,
+          18
+        ],
+        [
+          18,
+          18
+        ],
+        [
+          18,
+          18
+        ]
+      ]
+    },
+    {
+      "label": "long-needle",
+      "all4_equal": true,
+      "draft_tuples": [
+        [
+          6,
+          6
+        ],
+        [
+          6,
+          6
+        ],
+        [
+          6,
+          6
+        ],
+        [
+          6,
+          6
+        ]
+      ]
+    },
+    {
+      "label": "fork-validation-en-1024-r1",
+      "all4_equal": true,
+      "draft_tuples": [
+        [
+          224,
+          143
+        ],
+        [
+          224,
+          143
+        ],
+        [
+          224,
+          143
+        ],
+        [
+          224,
+          143
+        ]
+      ]
+    },
+    {
+      "label": "fork-validation-en-16384-r1",
+      "all4_equal": true,
+      "draft_tuples": [
+        [
+          230,
+          132
+        ],
+        [
+          230,
+          132
+        ],
+        [
+          230,
+          132
+        ],
+        [
+          230,
+          132
+        ]
+      ]
+    }
+  ],
+  "evidence": {
+    "ep24-1-off": {
+      "init": [],
+      "qa_pass": 4,
+      "qa_wrong_text": "4032",
+      "raw_sha256": "bf80db169ee53841cc1f3a94297db018b9a94a76a95d9f78a482c4022bf94a19"
+    },
+    "ep24-2-on": {
+      "init": [
+        [
+          "1",
+          "1536",
+          "1536"
+        ],
+        [
+          "2",
+          "1536",
+          "1536"
+        ],
+        [
+          "3",
+          "1536",
+          "1536"
+        ],
+        [
+          "4",
+          "1152",
+          "1152"
+        ],
+        [
+          "5",
+          "1152",
+          "1152"
+        ],
+        [
+          "6",
+          "1152",
+          "1152"
+        ],
+        [
+          "7",
+          "1152",
+          "1152"
+        ]
+      ],
+      "qa_pass": 4,
+      "qa_wrong_text": "4032",
+      "raw_sha256": "04ae4ce764f3aa891f92000505a583d6307afe9cb71ff07568d7432071547a0f"
+    },
+    "ep24-3-on": {
+      "init": [
+        [
+          "1",
+          "1536",
+          "1536"
+        ],
+        [
+          "2",
+          "1536",
+          "1536"
+        ],
+        [
+          "3",
+          "1536",
+          "1536"
+        ],
+        [
+          "4",
+          "1152",
+          "1152"
+        ],
+        [
+          "5",
+          "1152",
+          "1152"
+        ],
+        [
+          "6",
+          "1152",
+          "1152"
+        ],
+        [
+          "7",
+          "1152",
+          "1152"
+        ]
+      ],
+      "qa_pass": 4,
+      "qa_wrong_text": "4032",
+      "raw_sha256": "6c885787378731f94159e185cd404c162f851ae949746e40db728903bf242be1"
+    },
+    "ep24-4-off": {
+      "init": [],
+      "qa_pass": 4,
+      "qa_wrong_text": "4032",
+      "raw_sha256": "9c6f55d9151df82168fb90c389ce83bf3a2fc8c23acdd90c72d6678152840825"
+    }
+  },
+  "limits": [
+    "Two fixed English inputs, two measurements per arm per input; no p95 or broad acceptance.",
+    "QA remains legacy 4/5; complete token IDs/internal states unavailable.",
+    "Source manifest checked in one shared preflight, mapped executable/runtime checked each boot; no source rehash between boots.",
+    "Old 208/209 results are context only; gains cannot be stacked."
+  ]
+}

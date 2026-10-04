@@ -4,7 +4,7 @@
 
 ## Measured provenance
 
-Base e1fe89ba93ab9b7f53b65f0aa1261a903c9561d8, source archive aaab89d3e02e4b9ef47e8dc1011a2d338a1697a88ce0b623e5c75e0b597e4376, engine 246224e179b11e3f0e6066a93358ea049487d636ef138b67a38e2eec0e1bed5a. The annotated tag `agc8f-ep24-measured-20261004` targets `878914090fe2c16bfcfd0432b2cdc9eb68519e00`; its five engine source files match the measured archive. The rebased branch includes upstream engine changes and no longer has those identical five files. All numbers below belong only to that pre-rebase source and binary. The rebased code at `45b246075f489eb47b367067dfdba59560cb9a01` passed an independent CUDA sm89 Release build and 26 CTest checks on agc8f. New-base device correctness and performance remain unverified.
+Base e1fe89ba93ab9b7f53b65f0aa1261a903c9561d8, source archive aaab89d3e02e4b9ef47e8dc1011a2d338a1697a88ce0b623e5c75e0b597e4376, engine 246224e179b11e3f0e6066a93358ea049487d636ef138b67a38e2eec0e1bed5a. The annotated tag `agc8f-ep24-measured-20261004` targets `878914090fe2c16bfcfd0432b2cdc9eb68519e00`; its five engine source files match the measured archive. The rebased branch includes upstream engine changes and no longer has those identical five files. All numbers below belong only to that pre-rebase source and binary. The rebased code at `45b246075f489eb47b367067dfdba59560cb9a01` passed an independent CUDA sm89 Release build and 26 CTest checks on agc8f. The new-base limited replication is recorded below; full numerical and broad performance acceptance remain outstanding.
 
 Four independent boots OFF/ON/ON/OFF, 32 requests including 8 performance requests (two fixed prompts), IQ3_S/original MTP/FP16, 256 generated tokens and zero prompt reuse: decode throughput 58.42→60.76 tok/s at 1K and52.90→55.06 at16K, +4.01%/+4.08%. Both mirrored pairs exceed3.8%, OFF drift below0.24%. See AGC8F_EP24_SCREEN.json. Corresponding final text/draft counts match; QA remains4/5 with the known arithmetic error. End-to-end1K is inconsistent; these are limited decode screens, not broad performance or numerical acceptance. No full-logit equivalence claim.
 
@@ -27,3 +27,16 @@ Replace temporary hooks with validated configuration, audit allocation/error/tea
 ## Rebased build receipt (2026-10-04)
 
 Source archive `bad81088d143e8a76facbf20b18d7a4aa8c37a40d105450182de7a314436d7e0`, engine SHA256 `0bf32c52f8057b389c1d9453194b15c0e3afdce95d7013e40a77c84e67f56305`, CUDA13.2/sm89, fixed ggml `3cf03257f219afbe7334045ff7c6a06ac68c627d`. Independent engine directory `Strata-AGC8F-ep24-rebased-213-v1`; no model request or new speed measurement was performed. Build completed in117.8s, 26/26 CTest passed, devices idle and ports closed afterward. Local EP plain/ASan/UBSan controls also passed; they do not replace real-device validation.
+
+## Latest-upstream device replication (2026-10-04, 214/215)
+
+Using the above rebased binary, four independent OFF/ON/ON/OFF boots completed32 requests, including8 performance requests. This compares the same rebased fork with EP24 disabled/enabled, not an unmodified upstream binary. Other AGC8F patches and settings are identical. Upstream was fetched again and remained `99f3dbd`.
+
+| Input tokens | OFF decode tok/s | ON decode tok/s | Throughput gain | Mirrored pair gains | OFF elapsed drift |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1024 | 57.83 | 60.91 | 5.32% | 6.94% / 3.70% | 2.93% |
+| 16384 | 53.08 | 55.14 | 3.88% | 3.94% / 3.82% | 0.05% |
+
+The approximately4% decode signal survives. The noisier1K OFF baseline does not establish a stable5% gain. Pooled client elapsed time decreases5.82%/1.10% in these two cases; these are separate from decode throughput. All corresponding final texts, output counts and draft/accepted counts match across the four boots. Performance requests each generated256 tokens with zero cache reuse. QA remains4/5 with the known arithmetic error. Two fixed prompts with two observations per arm are not a broad held-out test or full internal numerical proof. The feature remains opt-in.
+
+`AGC8F_EP24_UPSTREAM_SCREEN.json` preserves timings, provenance, raw record hashes and the independent audit summary. Full raw artifacts remain in workspace `autoresearch/agc8f/iterations/214-ep24-upstream-abba/raw-gate`; each boot retains exact launch commands and actual environment/runtime hashes. Independent reviewer215 and a separate root recomputation agree. All owned processes exited, both localhost ports closed, all GPUs idle and the global lock released. Old measured-tag results remain separate and are not added to these gains.
