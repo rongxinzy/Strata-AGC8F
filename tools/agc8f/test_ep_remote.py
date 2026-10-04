@@ -18,18 +18,22 @@ stub=r'''
 #include <cstdint>
 #include <cassert>
 #include <cstdio>
+#include <limits>
+#include <exception>
+#include <new>
 using cudaError_t=int; using cudaStream_t=void*;
 constexpr int cudaSuccess=0,cudaStreamNonBlocking=1,cudaHostAllocPortable=1,cudaHostAllocMapped=2,cudaDeviceScheduleSpin=1,cudaDeviceMapHost=2,cudaMemcpyHostToDevice=1,cudaMemcpyDeviceToHost=2;
+int allocations=0,streams=0,failalloc=0,memcalls=0,failmem=0,throwmem=0,failsync=0,failstream=0,faillaunch=0;
 int current=0,verified=0,syncs=0,failcopy=0; size_t available=16ull<<30;
 int cudaGetDevice(int*p){*p=current;return 0;} int cudaSetDevice(int p){current=p;return 0;}
 const char* cudaGetErrorString(int){return "injected";}
-int cudaGetDeviceCount(int*p){*p=8;return 0;}int cudaInitDevice(int,int,int){return 0;}int cudaGetLastError(){return 0;}
-int cudaMemGetInfo(size_t*a,size_t*b){*a=*b=available;return 0;}
-int cudaStreamSynchronize(void*){++syncs;return 0;}int cudaStreamCreateWithFlags(void**p,int){*p=(void*)1;return 0;}int cudaStreamDestroy(void*){return 0;}
-int cudaFree(void*p){free(p);return 0;}int cudaFreeHost(void*p){free(p);return 0;}
-int cudaMalloc(void**p,size_t n){*p=calloc(1,n);return 0;}int cudaHostAlloc(void**p,size_t n,int){return cudaMalloc(p,n);}
+int cudaGetDeviceCount(int*p){*p=8;return 0;}int cudaInitDevice(int,int,int){return 0;}int cudaGetLastError(){if(faillaunch){--faillaunch;return 1;}return 0;}
+int cudaMemGetInfo(size_t*a,size_t*b){++memcalls;if(memcalls==throwmem)throw std::bad_alloc();*a=*b=memcalls==failmem?0:available;return 0;}
+int cudaStreamSynchronize(void*){++syncs;if(failsync){--failsync;return 1;}return 0;}int cudaStreamCreateWithFlags(void**p,int){if(failstream){--failstream;return 1;}++streams;*p=(void*)1;return 0;}int cudaStreamDestroy(void*){--streams;return 0;}
+int cudaFree(void*p){if(p)--allocations;free(p);return 0;}int cudaFreeHost(void*p){return cudaFree(p);}
+int cudaMalloc(void**p,size_t n){if(failalloc&&!--failalloc)return 1;*p=calloc(1,n);++allocations;return 0;}int cudaHostAlloc(void**p,size_t n,int){return cudaMalloc(p,n);}
 int cudaHostGetDevicePointer(void**p,void*q,int){*p=q;return 0;}
-int cudaMemcpyAsync(void*d,const void*s,size_t n,int,void*){if(failcopy){--failcopy;return 1;}memcpy(d,s,n);return 0;}
+int cudaMemcpyAsync(void*d,const void*s,size_t n,int,void*){if(failcopy&&!--failcopy)return 1;memcpy(d,s,n);return 0;}
 namespace strata::kernels::cpu { constexpr int H=32,FF=32,MAXT=8;struct Fmt{int gu_type=18,d_type=20,n_embd=32,n_ff=32;};
 struct Layout {bool native=true;size_t max_blob=8;std::vector<Fmt>fmt=std::vector<Fmt>(48);size_t blob_bytes(int)const{return 8;}};Layout& expert_layout(){static Layout l;return l;} }
 namespace strata::core {
@@ -84,6 +88,19 @@ failcopy=1;assert(!rs[0].begin(0,x,ids,8,10,kind,res,err));assert(!rs[0].begin(0
 assert(rs[0].begin(0,x,ids,8,10,kind,res,err));assert(rs[0].finish(out,err));checks+=5;
 for(int r=0;r<3;r++) {assert(rs[r].begin(1,x,ids,8,10,kind,res,err));for(int i=0;i<80;i++){assert(!rs[r].owns(i));checks++;}assert(rs[r].finish(out,err));}
 
+// Failed enqueues can be drained with an output argument but must not publish stale rows.
+for(int failure=1;failure<=4;failure++) {
+std::fill(out,out+80*32,-77);if(failure<=3)failcopy=failure;else faillaunch=1;
+assert(!rs[0].begin(0,x,ids,8,10,kind,res,err));assert(!rs[0].finish(out,err));
+assert(std::all_of(out,out+80*32,[](float v){return v==-77;}));checks+=3;
+}
+assert(rs[0].begin(0,x,ids,8,10,kind,res,err));failsync=1;
+assert(!rs[0].finish(out,err));assert(!rs[0].ep_set_active(false));
+assert(!rs[0].begin(0,x,ids,8,10,kind,res,err));assert(rs[0].finish(nullptr,err));checks+=5;
+for(auto t:{INT64_MIN,INT64_MAX,int64_t(0),int64_t(9)})assert(!rs[0].begin(0,x,ids,t,10,kind,res,err));
+assert(!rs[0].begin(0,x,ids,8,INT64_MAX,kind,res,err));
+assert(!rs[0].begin(0,nullptr,ids,8,10,kind,res,err));assert(!rs[0].begin(0,x,nullptr,8,10,kind,res,err));checks+=7;
+
 // Actual production selection policy: largest blobs, deterministic ascending ties.
 auto plan=strata::core::ep24_plan([](int l){return l%6==5?20:10;});
 for(int st=0;st<8;st++){assert(plan.layers[st][0]==st*6+5);assert(plan.layers[st][1]==st*6);assert(plan.layers[st][2]==st*6+1);
@@ -129,6 +146,27 @@ std::vector<std::pair<int32_t,int32_t>> one;for(int e=1;e<512;e+=4)one.emplace_b
 std::vector<int> one_rank(48);one_rank[47]=1;std::vector<uint8_t> fresh(48*512);RemoteExperts bad;
 auto wrong=by_layer;wrong[47]=&primaries[0];assert(!bad.open(1,128,48,512,one,primaries[0],src,fresh,err,true,&one_rank,&wrong));checks++;
 available=512ull<<20;assert(!bad.open(1,128,48,512,one,primaries[0],src,fresh,err,true,&one_rank,&by_layer));available=16ull<<30;checks++;
+// Each partial staging allocation failure releases all earlier resources and leaves claims untouched.
+for(int fail=0;fail<=9;fail++) {
+int a=allocations,b=streams;if(fail)failalloc=fail;else failstream=1;
+assert(!bad.open(1,128,48,512,one,primaries[0],src,fresh,err,true,&one_rank,&by_layer));
+assert(allocations==a && streams==b && current==0);
+assert(std::none_of(fresh.begin(),fresh.end(),[](uint8_t v){return v!=0;}));checks+=3;
+}
+// Final memory reserve rejection and a host allocation exception have the same rollback contract.
+for(int mode=0;mode<2;mode++) {
+int a=allocations,b=streams;memcalls=0;if(mode)throwmem=2;else failmem=2;
+assert(!bad.open(1,128,48,512,one,primaries[0],src,fresh,err,true,&one_rank,&by_layer));
+assert(allocations==a && streams==b && current==0);
+assert(std::none_of(fresh.begin(),fresh.end(),[](uint8_t v){return v!=0;}));
+throwmem=failmem=0;checks+=3;
+}
+assert(!bad.open(1,128,INT64_MAX,INT64_MAX,one,primaries[0],src,fresh,err));checks++;
+// Successful reuse after failure, and close while a window owns its staging buffers.
+assert(bad.open(1,128,48,512,one,primaries[0],src,fresh,err,true,&one_rank,&by_layer));
+assert(bad.begin(47,x,ids,8,10,kind,res,err));int before_sync=syncs;bad.close();assert(syncs>before_sync);
+for(auto& r:rs)r.close();for(auto& h:helpers)h.close();reset.close();
+assert(allocations==0 && streams==0);checks+=4;
 printf("PASS %d actual RemoteExperts host checks\\n",checks);}
 '''
 f=P/'actual_remote_host.cpp';f.write_text(stub+policy+h+c+test)

@@ -80,3 +80,27 @@ o.peer_device=-1;assert(gate(true,false,o)==0);puts("PASS EP peer compatibility 
 gf=P/'guard.cpp';gf.write_text('#include <cstdio>\n#include <cstdlib>\n#include <cstring>\n#include <string>\n#include <cassert>\n'+guard)
 subprocess.run(['clang++','-std=c++17',str(gf),'-o',str(P/'guard')],check=True)
 subprocess.run([str(P/'guard')],check=True)
+
+# Compile the production environment parser: explicit 0/1 only, default off.
+pa=s.index('    // EP switches fail closed:')
+pb=s.index('    // Bounded numerical test only:',pa)
+parser='#include <cstdio>\n#include <cstdlib>\n#include <cstring>\n#include <cassert>\nint parse(){\n'+s[pa:pb]+r"""
+return ep24 ? 24 : ep_l0 ? 1 : 0;
+}
+int main(){
+unsetenv("STRATA_EP_L0");unsetenv("STRATA_EP_STAGE_TOP3");assert(parse()==0);
+setenv("STRATA_EP_STAGE_TOP3","1",1);assert(parse()==24);
+setenv("STRATA_EP_L0","1",1);assert(parse()==2);
+setenv("STRATA_EP_STAGE_TOP3","0",1);assert(parse()==1);
+setenv("STRATA_EP_L0","0",1);assert(parse()==0);
+for(const char* key : {"STRATA_EP_L0","STRATA_EP_STAGE_TOP3"}) {
+ for(const char* bad : {"", "true", "01", "2", "1 "}) {
+  setenv(key,bad,1);assert(parse()==2);
+ }
+ setenv(key,"0",1);
+}
+puts("PASS strict EP environment parser");}
+"""
+pf=P/'parser.cpp';pf.write_text('#include <initializer_list>\n'+parser)
+subprocess.run(['clang++','-std=c++17',str(pf),'-o',str(P/'parser')],check=True)
+subprocess.run([str(P/'parser')],check=True)

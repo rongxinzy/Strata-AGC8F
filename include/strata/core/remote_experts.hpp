@@ -70,7 +70,7 @@ private:
     float* z_x_ = nullptr;     ///< h_x_ as the helper GPU sees it (zero-copy: no input copy per layer)
     float* z_out_ = nullptr;   ///< h_out_ as the helper GPU sees it (zero-copy: no result copy)
     bool zero_copy_ = false;
-    bool ep_replica_ = false, pending_ = false;
+    bool ep_replica_ = false, pending_ = false, result_ready_ = false;
     bool ep_active_ = true;
     std::vector<int> ep_rank_;
     int64_t ep_layer_ = -1;

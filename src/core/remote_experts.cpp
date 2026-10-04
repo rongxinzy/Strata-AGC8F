@@ -10,7 +10,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <cstdio>
-#include <cstdio>
+#include <exception>
+#include <limits>
 
 namespace strata::core {
 namespace {
@@ -106,7 +107,7 @@ void RemoteExperts::close() {
         if (h_meta_) cudaFreeHost(h_meta_);
         if (stream_) cudaStreamDestroy(stream_);
     }
-    ep_replica_ = pending_ = false;
+    ep_replica_ = pending_ = result_ready_ = false;
     ep_active_ = true;
     ep_rank_.clear();
     ep_layer_ = -1;
@@ -127,12 +128,13 @@ bool RemoteExperts::open(int device, int slots, int64_t layers, int64_t experts,
                          const std::vector<std::pair<int32_t, int32_t>>& ranked,
                          const ExpertCache& primary, ExpertSource& source,
                          std::vector<uint8_t>& claimed, std::string& err, bool allow_replica, const std::vector<int>* layer_ranks,
-                         const std::vector<const ExpertCache*>* primary_by_layer) {
+                         const std::vector<const ExpertCache*>* primary_by_layer) try {
     close();
     int count = 0;
     if (!check(cudaGetDeviceCount(&count), "cudaGetDeviceCount", err, device)) return false;
     if (device < 1 || device >= count || slots <= 0 || ranked.empty() ||
-        layers <= 0 || experts <= 0 || claimed.size() != (size_t) layers * (size_t) experts) {
+        layers <= 0 || experts <= 0 || (uint64_t)layers > std::numeric_limits<size_t>::max() / (uint64_t)experts ||
+        claimed.size() != (size_t) layers * (size_t) experts) {
         err = "CUDA" + std::to_string(device) + " experts: need the device, ranked experts and positive slot count";
         return false;
     }
@@ -259,7 +261,6 @@ bool RemoteExperts::open(int device, int slots, int64_t layers, int64_t experts,
     returned_bytes_ = full_row_bytes_ = 0;
     for (const auto& pair : selected) {
         layers_present_[(size_t) pair.first] = 1;
-        claimed[(size_t) pair.first * (size_t) experts + (size_t) pair.second] = 1;
     }
     if (ep_replica_) {
         size_t free_after = 0, total_after = 0;
@@ -268,7 +269,14 @@ bool RemoteExperts::open(int device, int slots, int64_t layers, int64_t experts,
         std::fprintf(stderr, "EP_INIT device=%d layers=frozen replicas=%zu verified=%zu weight_bytes=%llu free_before=%zu free_after=%zu independent_stream=1 DMA=1\n",
                      device, selected.size(), selected.size(), (unsigned long long)needed, free_bytes, free_after);
     }
+    // Publish ownership only after every allocation and the final capacity gate succeeds.
+    for (const auto& pair : selected)
+        claimed[(size_t) pair.first * (size_t) experts + (size_t) pair.second] = 1;
     return true;
+} catch (const std::exception& ex) {
+    close();
+    err = std::string("remote expert initialization failed: ") + ex.what();
+    return false;
 }
 
 bool RemoteExperts::ep_set_active(bool active) {
@@ -289,12 +297,13 @@ bool RemoteExperts::begin(int64_t layer, const float* x, const int32_t* ids, int
     struct Timer { double& acc; std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
         ~Timer() { acc += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count(); } } timer{ms_begin_};
     if (pending_) { err = "remote begin before finish"; return false; }
-    const int64_t n = n_tok * k;
-    if (n <= 0 || n > CAP || n_tok > strata::kernels::cpu::MAXT || k != 10 || layer < 0 ||
+    if (n_tok <= 0 || n_tok > strata::kernels::cpu::MAXT || k != 10 || !x || !ids || layer < 0 ||
         (size_t) layer >= layers_present_.size() || device_ < 0) {
         err = "CUDA" + std::to_string(device_) + " experts: invalid layer, routing width or window size";
         return false;
     }
+    const int64_t n = n_tok * k; // bounds checked before multiplication
+    result_ready_ = false;
     std::fill(owned_.begin(), owned_.begin() + n, 0);
     group_id_.clear(); ptr_.clear(); start_.clear(); dst_.clear(); tok_.clear(); original_row_.clear();
     if (!layers_present_[(size_t) layer]) return true;
@@ -366,6 +375,7 @@ bool RemoteExperts::begin(int64_t layer, const float* x, const int32_t* ids, int
     const uint64_t compact_bytes = (uint64_t) dst_.size() * H * sizeof(float);
     if (!zero_copy_ && !check(cudaMemcpyAsync(h_out_, d_out_, (size_t) compact_bytes, cudaMemcpyDeviceToHost, s),
                "copy results", err, device_)) return false;
+    result_ready_ = true;
     ++launched_layers_;
     returned_bytes_ += compact_bytes;
     full_row_bytes_ += (uint64_t) n * H * sizeof(float);
@@ -380,6 +390,13 @@ bool RemoteExperts::finish(float* out, std::string& err) {
     if (!check(cudaStreamSynchronize(stream_), "finish", err, device_)) return false;
     ms_wait_ += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - w0).count();
     pending_ = false;
+    const bool ready = result_ready_;
+    result_ready_ = false;
+    // A failed enqueue may have no result DMA. Drain it, but never publish stale rows.
+    if (!ready) {
+        if (out) { err = "remote finish: incomplete expert result discarded"; return false; }
+        return true;
+    }
     if (ep_replica_ && out && std::getenv("STRATA_EP_AUDIT"))
         std::fprintf(stderr, "EP_SERVE device=%d layer=%lld entries=%zu groups=%d DMA=1\n", device_, (long long)ep_layer_, original_row_.size(), groups_);
     if (out) for (size_t i = 0; i < original_row_.size(); ++i)

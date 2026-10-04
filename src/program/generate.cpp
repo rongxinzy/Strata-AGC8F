@@ -1427,10 +1427,16 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "strata generate: --resident-cpu-experts requires --mmap-experts and a static --expert-profile\n");
         return 2;
     }
-    const char* ep_env = std::getenv("STRATA_EP_L0");
-    const bool ep_l0 = ep_env && std::strcmp(ep_env, "1") == 0;
-    const char* ep24_env = std::getenv("STRATA_EP_STAGE_TOP3");
-    const bool ep24 = ep24_env && std::strcmp(ep24_env, "1") == 0;
+    // EP switches fail closed: typos must not silently disable a requested path.
+    const auto ep_flag = [](const char* name, bool& enabled) {
+        const char* value = std::getenv(name);
+        enabled = value && std::strcmp(value, "1") == 0;
+        if (!value || enabled || std::strcmp(value, "0") == 0) return true;
+        std::fprintf(stderr, "%s must be exactly 0 or 1\n", name);
+        return false;
+    };
+    bool ep_l0 = false, ep24 = false;
+    if (!ep_flag("STRATA_EP_L0", ep_l0) || !ep_flag("STRATA_EP_STAGE_TOP3", ep24)) return 2;
     if (ep_l0 && ep24) { std::fprintf(stderr, "EP modes are mutually exclusive\n"); return 2; }
     // Bounded numerical test only: OFF retains all replica allocations/bindings.
     const char* ep_test_env = std::getenv("STRATA_EP_TEST_SEQUENCE");
@@ -4668,7 +4674,7 @@ int main(int argc, char** argv) {
         // Allocate only AFTER original prefill/cache/scratch decisions; never shrink a cache for EP.
         if (ep_l0) {
             bool eligible = multi_gpu && !split_same && n_stages == 8 && stages.size() == 7 &&
-                            g.n_layers == 48 && g.n_embd == 2560 && g.n_layers == 48 && g.n_embd == 2560 && g.n_expert == 512 && strata::kernels::cpu::expert_layout().native &&
+                            g.n_layers == 48 && g.n_embd == 2560 && g.n_expert == 512 && strata::kernels::cpu::expert_layout().native &&
                             host_res.size() == (size_t)(g.n_layers * g.n_expert);
             for (size_t st = 0; st < stages.size(); ++st) eligible &= stages[st]->dev == (int)st + 1;
             for (int32_t slot : host_res) eligible &= slot >= 0;
