@@ -1,10 +1,10 @@
 # AGC8F expert parallel engineering branch
 
-`feature/agc8f-expert-parallel` preserves the measured 24-layer candidate before upstream integration. It is opt-in and not release-ready. The 48-layer experiment is excluded.
+`feature/agc8f-expert-parallel` integrates the opt-in 24-layer candidate onto upstream `99f3dbd0b21d1401b3769e0c0d963913607f380b`. It is opt-in and not release-ready. The 48-layer experiment is excluded.
 
 ## Measured provenance
 
-Base e1fe89ba93ab9b7f53b65f0aa1261a903c9561d8, source archive aaab89d3e02e4b9ef47e8dc1011a2d338a1697a88ce0b623e5c75e0b597e4376, engine 246224e179b11e3f0e6066a93358ea049487d636ef138b67a38e2eec0e1bed5a. Five engine source files match the measured archive; this commit adds portable host test entry points, CI and documentation without changing those files.
+Base e1fe89ba93ab9b7f53b65f0aa1261a903c9561d8, source archive aaab89d3e02e4b9ef47e8dc1011a2d338a1697a88ce0b623e5c75e0b597e4376, engine 246224e179b11e3f0e6066a93358ea049487d636ef138b67a38e2eec0e1bed5a. The annotated tag `agc8f-ep24-measured-20261004` targets `878914090fe2c16bfcfd0432b2cdc9eb68519e00`; its five engine source files match the measured archive. The rebased branch includes upstream engine changes and no longer has those identical five files. All numbers below belong only to that pre-rebase source and binary. CUDA build, device correctness and performance on the new upstream base remain unverified.
 
 Four independent boots OFF/ON/ON/OFF, 32 requests including 8 performance requests (two fixed prompts), IQ3_S/original MTP/FP16, 256 generated tokens and zero prompt reuse: decode throughput 58.42→60.76 tok/s at 1K and52.90→55.06 at16K, +4.01%/+4.08%. Both mirrored pairs exceed3.8%, OFF drift below0.24%. See AGC8F_EP24_SCREEN.json. Corresponding final text/draft counts match; QA remains4/5 with the known arithmetic error. End-to-end1K is inconsistent; these are limited decode screens, not broad performance or numerical acceptance. No full-logit equivalence claim.
 
@@ -17,6 +17,8 @@ Use exact `STRATA_EP_STAGE_TOP3=1` with 8 ordered GPUs, split6,12,18,24,30,36,42
 ## Upstream maintenance
 
 Before each engineering/device round, fetch origin and upstream, record upstream/main SHA and divergence. Preserve a measured tag before rewriting branch history. Rebase onto upstream/main in a bounded integration step; resolve semantics rather than copying whole old files over upstream changes. Use force-with-lease only for this owned feature branch after review. Do not rewrite upstream-mirror main or the agc8f validated branch. A rebase invalidates prior binary performance attribution: rebuild independently and repeat numeric/QA and paired timing checks before quoting new-version gains.
+
+EP explicitly rejects every nonnegative `--peer-device`, including device 0, before helper setup. Upstream peer-cache and peer-prefill paths remain available with EP disabled. EP helper input, output and metadata staging retain explicit `cudaHostAllocPortable`; they do not depend on upstream's peer-only portable setting. This source inspection and host regression coverage do not establish device compatibility.
 
 ## Remaining engineering acceptance
 

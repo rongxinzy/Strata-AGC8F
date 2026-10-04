@@ -1447,10 +1447,10 @@ int main(int argc, char** argv) {
     }
     size_t ep_test_request = 0;
     const char* ep_dp = std::getenv("STRATA_VERIFY_DEVICE_PLAN");
-    if ((ep_l0 || ep24) && (!o.serve || o.spec_split || o.adapt_swaps != 0 || o.kv != "fp16" || o.kv_resident != 0 || o.kv != "fp16" || o.kv_resident != 0 ||
+    if ((ep_l0 || ep24) && (!o.serve || o.spec_split || o.adapt_swaps != 0 || o.kv != "fp16" || o.kv_resident != 0 || o.peer_device >= 0 ||
                   (ep_dp && std::strcmp(ep_dp, "0") != 0) || o.no_pool ||
                   o.expert_cache_remote[0] || o.expert_cache_remote[1] || o.expert_cache_remote[2])) {
-        std::fprintf(stderr, "EP L0 requires serve, DP0, no-spec-split, adapt-swaps=0, pool and no legacy remote cache\n");
+        std::fprintf(stderr, "EP requires serve, DP0, FP16 resident KV, no-spec-split, adapt-swaps=0, pool, no peer device or legacy remote cache\n");
         return 2;
     }
     const bool remote_caches = o.expert_cache_remote[0] > 0 || o.expert_cache_remote[1] > 0 ||

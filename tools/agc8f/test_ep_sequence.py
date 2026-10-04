@@ -63,3 +63,20 @@ for label,flags in [('plain',[]),('asan-ubsan',['-fsanitize=address,undefined','
   results.append(dict(mode=label,case=name,stdout=p.stdout,stderr=p.stderr))
 (P/'sequence-results.json').write_text(json.dumps(results,indent=2))
 print(f'PASS {len(results)} extracted production parser/boundary cases; static placement assertions pass')
+
+# Compile the real compatibility guard: peer modes must fail before any EP setup.
+ga=s.index('    const char* ep_dp =')
+gb=s.index('    const bool remote_caches',ga)
+guard=r'''
+struct Options {bool serve=true,spec_split=false,no_pool=false;int adapt_swaps=0,kv_resident=0,peer_device=-1;std::string kv="fp16";int expert_cache_remote[3]={};};
+int gate(bool ep_l0,bool ep24,Options o){
+'''+s[ga:gb]+r'''
+return 0;}
+int main(){unsetenv("STRATA_VERIFY_DEVICE_PLAN");Options o;
+assert(gate(false,true,o)==0);
+for(int peer: {0,1,7}){o.peer_device=peer;assert(gate(false,true,o)==2);assert(gate(true,false,o)==2);assert(gate(false,false,o)==0);}
+o.peer_device=-1;assert(gate(true,false,o)==0);puts("PASS EP peer compatibility guard");}
+'''
+gf=P/'guard.cpp';gf.write_text('#include <cstdio>\n#include <cstdlib>\n#include <cstring>\n#include <string>\n#include <cassert>\n'+guard)
+subprocess.run(['clang++','-std=c++17',str(gf),'-o',str(P/'guard')],check=True)
+subprocess.run([str(P/'guard')],check=True)
