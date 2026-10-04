@@ -13,3 +13,8 @@ jobs:
         run: cmake --build build-agc8f-host --target prefill_pipeline_test prefill_audit_test mtp_prefill_audit_test callback_probe_test boundary_probe_test plan_trace_test stage_dense_scope_test -j 2
       - name: Test
         run: ctest --test-dir build-agc8f-host -R '^(prefill_(pipeline|audit)|mtp_prefill_audit|stage_dense_scope)_test$|^(callback_probe|boundary_probe|plan_trace)_' --output-on-failure
+      - name: Expert parallel host and sanitizer regressions
+        run: |
+          python3 tools/agc8f/test_ep_remote.py
+          python3 tools/agc8f/test_ep_split.py
+          python3 tools/agc8f/test_ep_sequence.py

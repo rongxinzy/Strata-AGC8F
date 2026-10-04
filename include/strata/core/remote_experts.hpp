@@ -27,7 +27,12 @@ public:
     bool open(int device, int slots, int64_t layers, int64_t experts,
               const std::vector<std::pair<int32_t, int32_t>>& ranked,
               const ExpertCache& primary, ExpertSource& source,
-              std::vector<uint8_t>& claimed, std::string& err);
+              std::vector<uint8_t>& claimed, std::string& err, bool allow_replica = false,
+              const std::vector<int>* layer_ranks = nullptr,
+              const std::vector<const ExpertCache*>* primary_by_layer = nullptr);
+    bool ep_owns(int64_t layer, int32_t expert, int64_t n_tok, int64_t k) const;
+    // Test-only request-boundary switch; allocations and helper bindings stay live.
+    bool ep_set_active(bool active);
     void close();
 
     /// `kind` is the primary verifier's classification (-1 = CPU candidate),
@@ -65,6 +70,10 @@ private:
     float* z_x_ = nullptr;     ///< h_x_ as the helper GPU sees it (zero-copy: no input copy per layer)
     float* z_out_ = nullptr;   ///< h_out_ as the helper GPU sees it (zero-copy: no result copy)
     bool zero_copy_ = false;
+    bool ep_replica_ = false, pending_ = false;
+    bool ep_active_ = true;
+    std::vector<int> ep_rank_;
+    int64_t ep_layer_ = -1;
     float* d_out_ = nullptr;
     uint8_t* d_q8_ = nullptr;
     float* d_scales_ = nullptr;
