@@ -1,0 +1,794 @@
+{
+  "status": "RAW_INTEGRITY_AUDITED_NOT_FULL_NUMERICAL_ACCEPTANCE",
+  "engine_sha256": "e16d52baf233bd52230174a0d9a133d2b1812a09eec194f7424664df083c869d",
+  "source_archive_sha256": "7c71e10f6dcab374e40182332b1e3b034ecbe453647cc35751f0dae88414b5d1",
+  "api_requests": 60,
+  "performance_requests": 36,
+  "performance": [
+    {
+      "label": "fork-validation-code-1024-r1",
+      "input_tokens": 1024,
+      "decode_ms_ABBA": [
+        4036.7,
+        3852.8,
+        3855.1,
+        4017.9
+      ],
+      "client_s_ABBA": [
+        5.632283914950676,
+        5.149760190979578,
+        5.157708246028051,
+        5.327433533966541
+      ],
+      "off_decode_tok_s": 63.56616095150597,
+      "on_decode_tok_s": 66.42535580378573,
+      "paired_decode_speed_gain_pct": [
+        4.773151993355462,
+        4.22297735467303
+      ],
+      "pooled_decode_speed_gain_pct": 4.497982589291505,
+      "off_decode_speed_drift_pct": 0.46790612011249344,
+      "off_decode_abs_drift_pct": 0.4657269551861602,
+      "paired_client_elapsed_reduction_pct": [
+        8.567105835880506,
+        3.185873401448547
+      ],
+      "pooled_client_elapsed_reduction_pct": 5.951330542504351
+    },
+    {
+      "label": "fork-validation-en-1024-r1",
+      "input_tokens": 1024,
+      "decode_ms_ABBA": [
+        4365.7,
+        4202.2,
+        4201.4,
+        4361.5
+      ],
+      "client_s_ABBA": [
+        5.7730400720611215,
+        5.49083843594417,
+        5.48385329102166,
+        5.644665172905661
+      ],
+      "off_decode_tok_s": 58.667155559629656,
+      "on_decode_tok_s": 60.926269693940704,
+      "paired_decode_speed_gain_pct": [
+        3.8908190947598786,
+        3.81063455038797
+      ],
+      "pooled_decode_speed_gain_pct": 3.8507306392498775,
+      "off_decode_speed_drift_pct": 0.09629714547747525,
+      "off_decode_abs_drift_pct": 0.09620450328698303,
+      "paired_client_elapsed_reduction_pct": [
+        4.888267404944557,
+        2.8489179952762567
+      ],
+      "pooled_client_elapsed_reduction_pct": 3.8800574064236315
+    },
+    {
+      "label": "fork-validation-zh-1024-r1",
+      "input_tokens": 1024,
+      "decode_ms_ABBA": [
+        4065.6,
+        3881.2,
+        3890.3,
+        4058.0
+      ],
+      "client_s_ABBA": [
+        5.463027257937938,
+        5.172542616026476,
+        5.189653998007998,
+        5.358822674956173
+      ],
+      "off_decode_tok_s": 63.02624452213304,
+      "on_decode_tok_s": 65.88174741040983,
+      "paired_decode_speed_gain_pct": [
+        4.751107904771712,
+        4.310721538184703
+      ],
+      "pooled_decode_speed_gain_pct": 4.530656887344797,
+      "off_decode_speed_drift_pct": 0.1872843765401644,
+      "off_decode_abs_drift_pct": 0.18693427784336653,
+      "paired_client_elapsed_reduction_pct": [
+        5.31728340709593,
+        3.1568254299356613
+      ],
+      "pooled_client_elapsed_reduction_pct": 4.247456042265696
+    },
+    {
+      "label": "fork-validation-code-4096-r1",
+      "input_tokens": 4096,
+      "decode_ms_ABBA": [
+        3835.0,
+        3661.3,
+        3660.6,
+        3829.4
+      ],
+      "client_s_ABBA": [
+        6.506190479034558,
+        6.358743816032074,
+        6.337589732022025,
+        6.505226768087596
+      ],
+      "off_decode_tok_s": 66.80235895830072,
+      "on_decode_tok_s": 69.92720468730795,
+      "paired_decode_speed_gain_pct": [
+        4.744216535110479,
+        4.61126591269192
+      ],
+      "pooled_decode_speed_gain_pct": 4.677747579180269,
+      "off_decode_speed_drift_pct": 0.14623700840863396,
+      "off_decode_abs_drift_pct": 0.146023468057364,
+      "paired_client_elapsed_reduction_pct": [
+        2.2662518639380957,
+        2.5769591444212314
+      ],
+      "pooled_client_elapsed_reduction_pct": 2.42159399766958
+    },
+    {
+      "label": "fork-validation-en-4096-r1",
+      "input_tokens": 4096,
+      "decode_ms_ABBA": [
+        4411.9,
+        4238.6,
+        4240.2,
+        4413.0
+      ],
+      "client_s_ABBA": [
+        7.029192479909398,
+        6.859605262987316,
+        6.8750833929516375,
+        7.072751860017888
+      ],
+      "off_decode_tok_s": 58.01765459098687,
+      "on_decode_tok_s": 60.385903665613064,
+      "paired_decode_speed_gain_pct": [
+        4.088614165054483,
+        4.075279467949633
+      ],
+      "pooled_decode_speed_gain_pct": 4.081945558333722,
+      "off_decode_speed_drift_pct": -0.02492635395423548,
+      "off_decode_abs_drift_pct": 0.024932568734567055,
+      "paired_client_elapsed_reduction_pct": [
+        2.412613076207415,
+        2.794788661873837
+      ],
+      "pooled_client_elapsed_reduction_pct": 2.6042911185552575
+    },
+    {
+      "label": "fork-validation-zh-4096-r1",
+      "input_tokens": 4096,
+      "decode_ms_ABBA": [
+        4469.7,
+        4318.2,
+        4320.2,
+        4469.5
+      ],
+      "client_s_ABBA": [
+        7.077793124015443,
+        6.972286141011864,
+        6.979714235989377,
+        7.131443110993132
+      ],
+      "off_decode_tok_s": 57.27581886522283,
+      "on_decode_tok_s": 59.27023522874607,
+      "paired_decode_speed_gain_pct": [
+        3.508406280394616,
+        3.4558585250682894
+      ],
+      "pooled_decode_speed_gain_pct": 3.4821263196888497,
+      "off_decode_speed_drift_pct": 0.004474773464591131,
+      "off_decode_abs_drift_pct": 0.004474573237573397,
+      "paired_client_elapsed_reduction_pct": [
+        1.4906762765583892,
+        2.1276040857686307
+      ],
+      "pooled_client_elapsed_reduction_pct": 1.8103426092217378
+    },
+    {
+      "label": "fork-validation-code-16384-r1",
+      "input_tokens": 16384,
+      "decode_ms_ABBA": [
+        4150.8,
+        3964.7,
+        3965.5,
+        4151.1
+      ],
+      "client_s_ABBA": [
+        9.870805265032686,
+        9.710314863943495,
+        9.635497292038053,
+        9.84694610896986
+      ],
+      "off_decode_tok_s": 61.67262915718088,
+      "on_decode_tok_s": 64.56331492270057,
+      "paired_decode_speed_gain_pct": [
+        4.693923878225359,
+        4.680368175513805
+      ],
+      "pooled_decode_speed_gain_pct": 4.687145343118737,
+      "off_decode_speed_drift_pct": -0.007227000072274059,
+      "off_decode_abs_drift_pct": 0.007227522405323839,
+      "paired_client_elapsed_reduction_pct": [
+        1.6259099108937747,
+        2.1473542618375085
+      ],
+      "pooled_client_elapsed_reduction_pct": 1.8863166035828605
+    },
+    {
+      "label": "fork-validation-en-16384-r1",
+      "input_tokens": 16384,
+      "decode_ms_ABBA": [
+        4823.9,
+        4637.4,
+        4641.6,
+        4822.8
+      ],
+      "client_s_ABBA": [
+        10.706725761992857,
+        10.24910251609981,
+        10.374758163001388,
+        10.534074503928423
+      ],
+      "off_decode_tok_s": 53.07514486819326,
+      "on_decode_tok_s": 55.17835973704063,
+      "paired_decode_speed_gain_pct": [
+        4.0216500625350315,
+        3.9038262668045443
+      ],
+      "pooled_decode_speed_gain_pct": 3.9627114990839596,
+      "off_decode_speed_drift_pct": 0.022808327112877613,
+      "off_decode_abs_drift_pct": 0.02280312610127603,
+      "paired_client_elapsed_reduction_pct": [
+        4.274166127589951,
+        1.5123904892415663
+      ],
+      "pooled_client_elapsed_reduction_pct": 2.9045025568546823
+    },
+    {
+      "label": "fork-validation-zh-16384-r1",
+      "input_tokens": 16383,
+      "decode_ms_ABBA": [
+        4207.7,
+        4029.7,
+        4029.7,
+        4207.8
+      ],
+      "client_s_ABBA": [
+        10.022515408927575,
+        9.662609660997987,
+        9.64381251798477,
+        9.94182597391773
+      ],
+      "off_decode_tok_s": 60.8401164517854,
+      "on_decode_tok_s": 63.52830235501403,
+      "paired_decode_speed_gain_pct": [
+        4.417202273122078,
+        4.4196838474328315
+      ],
+      "pooled_decode_speed_gain_pct": 4.418443060277455,
+      "off_decode_speed_drift_pct": -0.002376538808890327,
+      "off_decode_abs_drift_pct": 0.002376595289596782,
+      "paired_client_elapsed_reduction_pct": [
+        3.590972258411307,
+        2.9975726462603047
+      ],
+      "pooled_client_elapsed_reduction_pct": 3.2954716173500986
+    }
+  ],
+  "whole_nine_inputs": {
+    "decode_ms_ABBA": [
+      38367.0,
+      36786.1,
+      36804.6,
+      38331.00000000001
+    ],
+    "client_s_ABBA": [
+      68.08157376386225,
+      65.62580350402277,
+      65.67767086904496,
+      67.363189707743
+    ],
+    "off_decode_tok_s": 60.07979347570993,
+    "on_decode_tok_s": 62.61660780506233,
+    "paired_decode_speed_gain_pct": [
+      4.297547171350047,
+      4.147307673497358
+    ],
+    "pooled_decode_speed_gain_pct": 4.2224085380353715,
+    "off_decode_speed_drift_pct": 0.09391876027233792,
+    "off_decode_abs_drift_pct": 0.09383063570253791,
+    "paired_client_elapsed_reduction_pct": [
+      3.6070997247466763,
+      2.50213632402313
+    ],
+    "pooled_client_elapsed_reduction_pct": 3.057548326263426
+  },
+  "trajectory": [
+    {
+      "label": "warmup",
+      "all4_equal": true,
+      "draft_tuples": [
+        [
+          110,
+          58
+        ],
+        [
+          110,
+          58
+        ],
+        [
+          110,
+          58
+        ],
+        [
+          110,
+          58
+        ]
+      ]
+    },
+    {
+      "label": "zh-arithmetic",
+      "all4_equal": true,
+      "draft_tuples": [
+        [
+          7,
+          4
+        ],
+        [
+          7,
+          4
+        ],
+        [
+          7,
+          4
+        ],
+        [
+          7,
+          4
+        ]
+      ]
+    },
+    {
+      "label": "en-arithmetic",
+      "all4_equal": true,
+      "draft_tuples": [
+        [
+          4,
+          4
+        ],
+        [
+          4,
+          4
+        ],
+        [
+          4,
+          4
+        ],
+        [
+          4,
+          4
+        ]
+      ]
+    },
+    {
+      "label": "zh-retrieval",
+      "all4_equal": true,
+      "draft_tuples": [
+        [
+          6,
+          6
+        ],
+        [
+          6,
+          6
+        ],
+        [
+          6,
+          6
+        ],
+        [
+          6,
+          6
+        ]
+      ]
+    },
+    {
+      "label": "code-correctness",
+      "all4_equal": true,
+      "draft_tuples": [
+        [
+          18,
+          18
+        ],
+        [
+          18,
+          18
+        ],
+        [
+          18,
+          18
+        ],
+        [
+          18,
+          18
+        ]
+      ]
+    },
+    {
+      "label": "long-needle",
+      "all4_equal": true,
+      "draft_tuples": [
+        [
+          6,
+          6
+        ],
+        [
+          6,
+          6
+        ],
+        [
+          6,
+          6
+        ],
+        [
+          6,
+          6
+        ]
+      ]
+    },
+    {
+      "label": "fork-validation-code-1024-r1",
+      "all4_equal": true,
+      "draft_tuples": [
+        [
+          219,
+          153
+        ],
+        [
+          219,
+          153
+        ],
+        [
+          219,
+          153
+        ],
+        [
+          219,
+          153
+        ]
+      ]
+    },
+    {
+      "label": "fork-validation-en-1024-r1",
+      "all4_equal": true,
+      "draft_tuples": [
+        [
+          224,
+          143
+        ],
+        [
+          224,
+          143
+        ],
+        [
+          224,
+          143
+        ],
+        [
+          224,
+          143
+        ]
+      ]
+    },
+    {
+      "label": "fork-validation-zh-1024-r1",
+      "all4_equal": true,
+      "draft_tuples": [
+        [
+          222,
+          152
+        ],
+        [
+          222,
+          152
+        ],
+        [
+          222,
+          152
+        ],
+        [
+          222,
+          152
+        ]
+      ]
+    },
+    {
+      "label": "fork-validation-code-4096-r1",
+      "all4_equal": true,
+      "draft_tuples": [
+        [
+          217,
+          164
+        ],
+        [
+          217,
+          164
+        ],
+        [
+          217,
+          164
+        ],
+        [
+          217,
+          164
+        ]
+      ]
+    },
+    {
+      "label": "fork-validation-en-4096-r1",
+      "all4_equal": true,
+      "draft_tuples": [
+        [
+          227,
+          144
+        ],
+        [
+          227,
+          144
+        ],
+        [
+          227,
+          144
+        ],
+        [
+          227,
+          144
+        ]
+      ]
+    },
+    {
+      "label": "fork-validation-zh-4096-r1",
+      "all4_equal": true,
+      "draft_tuples": [
+        [
+          216,
+          139
+        ],
+        [
+          216,
+          139
+        ],
+        [
+          216,
+          139
+        ],
+        [
+          216,
+          139
+        ]
+      ]
+    },
+    {
+      "label": "fork-validation-code-16384-r1",
+      "all4_equal": true,
+      "draft_tuples": [
+        [
+          229,
+          155
+        ],
+        [
+          229,
+          155
+        ],
+        [
+          229,
+          155
+        ],
+        [
+          229,
+          155
+        ]
+      ]
+    },
+    {
+      "label": "fork-validation-en-16384-r1",
+      "all4_equal": true,
+      "draft_tuples": [
+        [
+          230,
+          132
+        ],
+        [
+          230,
+          132
+        ],
+        [
+          230,
+          132
+        ],
+        [
+          230,
+          132
+        ]
+      ]
+    },
+    {
+      "label": "fork-validation-zh-16384-r1",
+      "all4_equal": true,
+      "draft_tuples": [
+        [
+          223,
+          152
+        ],
+        [
+          223,
+          152
+        ],
+        [
+          223,
+          152
+        ],
+        [
+          223,
+          152
+        ]
+      ]
+    }
+  ],
+  "evidence": {
+    "ep24-1-off": {
+      "init": [],
+      "qa_pass": 4,
+      "qa_wrong_text": "4032",
+      "raw_sha256": "21df84359e777f84f23cc8ca17e3b931013aceaa98a9010b57fd4264347218cb"
+    },
+    "ep24-2-on": {
+      "init": [
+        [
+          "1",
+          "1536",
+          "1536"
+        ],
+        [
+          "2",
+          "1536",
+          "1536"
+        ],
+        [
+          "3",
+          "1536",
+          "1536"
+        ],
+        [
+          "4",
+          "1152",
+          "1152"
+        ],
+        [
+          "5",
+          "1152",
+          "1152"
+        ],
+        [
+          "6",
+          "1152",
+          "1152"
+        ],
+        [
+          "7",
+          "1152",
+          "1152"
+        ]
+      ],
+      "qa_pass": 4,
+      "qa_wrong_text": "4032",
+      "raw_sha256": "ee2e8f8200891ea5d3384126e78820929948aa7bd492df5fd6f4bf1278ed4cd1"
+    },
+    "ep24-3-on": {
+      "init": [
+        [
+          "1",
+          "1536",
+          "1536"
+        ],
+        [
+          "2",
+          "1536",
+          "1536"
+        ],
+        [
+          "3",
+          "1536",
+          "1536"
+        ],
+        [
+          "4",
+          "1152",
+          "1152"
+        ],
+        [
+          "5",
+          "1152",
+          "1152"
+        ],
+        [
+          "6",
+          "1152",
+          "1152"
+        ],
+        [
+          "7",
+          "1152",
+          "1152"
+        ]
+      ],
+      "qa_pass": 4,
+      "qa_wrong_text": "4032",
+      "raw_sha256": "8a77cb2c471aa6c77a1885facd004d26bc4a67faac6ddad543fac791c7ba6acf"
+    },
+    "ep24-4-off": {
+      "init": [],
+      "qa_pass": 4,
+      "qa_wrong_text": "4032",
+      "raw_sha256": "8643dc60fbc87363a7d507561b289bfe3870d68e706c4537790a754377fee134"
+    }
+  },
+  "limits": [
+    "Nine fixed validation inputs across Chinese/English/code and1K/4K/16K; two observations per arm; not fresh heldout or p95.",
+    "QA remains legacy 4/5; complete token IDs/internal states unavailable.",
+    "Source manifest checked in one shared preflight, mapped executable/runtime checked each boot; no source rehash between boots.",
+    "Old 208/209 results are context only; gains cannot be stacked."
+  ],
+  "by_input_target": [
+    {
+      "target": 1024,
+      "actual_prompt_tokens": [
+        1024,
+        1024,
+        1024
+      ],
+      "off_tok_s": 61.67337203979859,
+      "on_tok_s": 64.3135284511996,
+      "decode_gain_pct": 4.280869237532969,
+      "client_reduction_pct": 4.683584084056114,
+      "pairs_gain_pct": [
+        4.45535430036359,
+        4.106538989520203
+      ]
+    },
+    {
+      "target": 4096,
+      "actual_prompt_tokens": [
+        4096,
+        4096,
+        4096
+      ],
+      "off_tok_s": 60.40466405804511,
+      "on_tok_s": 62.850104954765115,
+      "decode_gain_pct": 4.048430588687801,
+      "client_reduction_pct": 2.273756468820498,
+      "pairs_gain_pct": [
+        4.080012440559488,
+        4.016856231077659
+      ]
+    },
+    {
+      "target": 16384,
+      "actual_prompt_tokens": [
+        16384,
+        16384,
+        16383
+      ],
+      "off_tok_s": 58.261044374736855,
+      "on_tok_s": 60.786905487442915,
+      "decode_gain_pct": 4.335420244888932,
+      "client_reduction_pct": 2.7030856989804453,
+      "pairs_gain_pct": [
+        4.358840386959906,
+        4.312009369460634
+      ]
+    }
+  ],
+  "source_commit": "889028a755e067d96f16d857043fe91d1376ae8e"
+}

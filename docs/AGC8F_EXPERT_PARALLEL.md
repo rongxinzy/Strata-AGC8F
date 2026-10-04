@@ -22,7 +22,7 @@ EP explicitly rejects every nonnegative `--peer-device`, including device 0, bef
 
 ## Remaining engineering acceptance
 
-Replace temporary hooks with validated configuration, audit allocation/error/teardown paths, add real-device cancellation/restart checks, expand held-out workloads and only then consider merging into agc8f with the feature still default-off. Keep the measured24-layer baseline distinct from48-layer exploration.
+Configuration validation, allocation/error handling and real-device cancellation checks are completed below. Keep research hooks explicitly separate. Broader fresh held-out workloads, full internal numerical comparison and prolonged stress remain future acceptance work before any default enablement. Keep the measured24-layer baseline distinct from48-layer exploration.
 
 ## Rebased build receipt (2026-10-04)
 
@@ -40,3 +40,31 @@ Using the above rebased binary, four independent OFF/ON/ON/OFF boots completed32
 The approximately4% decode signal survives. The noisier1K OFF baseline does not establish a stable5% gain. Pooled client elapsed time decreases5.82%/1.10% in these two cases; these are separate from decode throughput. All corresponding final texts, output counts and draft/accepted counts match across the four boots. Performance requests each generated256 tokens with zero cache reuse. QA remains4/5 with the known arithmetic error. Two fixed prompts with two observations per arm are not a broad held-out test or full internal numerical proof. The feature remains opt-in.
 
 `AGC8F_EP24_UPSTREAM_SCREEN.json` preserves timings, provenance, raw record hashes and the independent audit summary. Full raw artifacts remain in workspace `autoresearch/agc8f/iterations/214-ep24-upstream-abba/raw-gate`; each boot retains exact launch commands and actual environment/runtime hashes. Independent reviewer215 and a separate root recomputation agree. All owned processes exited, both localhost ports closed, all GPUs idle and the global lock released. Old measured-tag results remain separate and are not added to these gains.
+
+## Configuration and failure behavior
+
+The supported opt-in remains `STRATA_EP_STAGE_TOP3=1`; leave it unset or set `0` to use the original path. `STRATA_EP_STAGE_TOP3` and the research-only `STRATA_EP_L0` now accept only exact `0`/`1`; empty strings, `true`, `01`, and whitespace are rejected instead of silently disabling a requested mode. They are mutually exclusive. The existing fixed topology/precision/residency guards still apply. Research audit/sequence hooks remain explicitly separate and must be unset for deployment and performance measurements.
+
+Helper initialization publishes its expert ownership only after all allocations and the final capacity check succeed. Standard initialization exceptions close partial resources and return an error. Invalid windows and null input pointers are rejected before size multiplication. An incomplete asynchronous submission retains its pending lease until drained and cannot publish stale result rows. Synchronization failure retains the lease; another request cannot overwrite its staging. These changes preserve the measured expert assignment and normal kernel arithmetic.
+
+Host tests inject allocation, copy, launch and synchronization failures using CUDA stubs. They do not establish recovery from a real sticky CUDA error or device loss; those require terminating the affected process and a healthy device before restarting. No driver reset or device-loss injection is performed by this project.
+
+## Lifecycle device evidence (219 build / 223 run)
+
+The independent sm89 build of the closeout source passed26 CTest checks. An audit-only device run disconnected decode after65 visible engine tokens and an actual EP_SERVE witness; the engine stopped at67 generated tokens, below the2048 request budget. A16K prompt cancellation stopped after2048 prompt tokens with zero generated output. The same engine PID and birth timestamp then completed the normal eight-request warmup/QA/validation sequence. API-parent TERM completed with exit0 and no harness KILL; ports closed, all eight GPUs idle, lock released. API close retains its own escalation policy; this is not a per-destructor trace or proof of device-loss recovery.
+
+The earlier217 cancellation attempt is retained: it cancelled decode before the EP path had run, and one group-TERM shutdown required KILL. It is excluded from EP-active cancellation and cooperative-shutdown acceptance. Two inherited223 controller metadata fields (a self-comparison and a RESTART label for a single boot) are also excluded; acceptance uses raw request, PID, phase, EP-log and cleanup evidence. Audit timings are never performance evidence.
+
+## Final closeout matrix (220, source889028a)
+
+The final lifecycle-fixed source at `889028a755e067d96f16d857043fe91d1376ae8e` is byte-identical to the219 build for all include/src/tools-agc8f files. Engine SHA256 `e16d52baf233bd52230174a0d9a133d2b1812a09eec194f7424664df083c869d`. Source CI37200514902 passed. Four independent OFF/ON/ON/OFF boots completed60 requests, including36 performance requests: Chinese/English/code at1K/4K/16K,256 output tokens and zero prompt reuse, no audit/profile/test sequence. These are existing frozen validation inputs, not newly held-out data. The16K Chinese prompt has16383 actual tokens; the other two have16384.
+
+| Input target | OFF decode tok/s | ON decode tok/s | Throughput gain | Client elapsed reduction |
+| --- | ---: | ---: | ---: | ---: |
+| 1024 | 61.67 | 64.31 | 4.28% | 4.68% |
+| 4096 | 60.40 | 62.85 | 4.05% | 2.27% |
+| 16384 | 58.26 | 60.79 | 4.34% | 2.70% |
+
+Across all36 performance requests, decode60.08→62.62tok/s (+4.22%; mirrored pairs+4.30%/+4.15%; OFF elapsed drift0.094%). Client cumulative elapsed decreases3.06%. Every individual input improves in both mirrored pairs. Corresponding final text/output/draft/accepted counts match across all four boots; QA retains the known4/5 result. Text equality is not full-logit/internal-state proof, and this limited matrix does not establish p95 or general workload guarantees. Four sequential server boots all completed API-parent TERM with exit0, no harness KILL, and idle cleanup. The feature remains default-off.
+
+See `AGC8F_EP24_FINAL_MATRIX.json` for raw-derived timings/provenance/hashes. Workspace raw: `autoresearch/agc8f/iterations/220-ep24-final-matrix/raw-gate`, including exact launch commands. Independent222 reviewed lifecycle raw and matrix formulas; the complete raw checker and a separate root recomputation agree. Prior measured-tag and214 results are retained separately.
