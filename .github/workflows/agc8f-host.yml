@@ -18,3 +18,7 @@ jobs:
           python3 tools/agc8f/test_ep_remote.py
           python3 tools/agc8f/test_ep_split.py
           python3 tools/agc8f/test_ep_sequence.py
+          python3 tools/agc8f/test_ep_native_reset.py
+          python3 tools/agc8f/test_ep_dispatch.py
+          python3 tools/agc8f/test_ep_prefill_flow.py
+          python3 tools/agc8f/test_ep_host_policy.py
