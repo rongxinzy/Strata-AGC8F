@@ -211,6 +211,11 @@ public:
     /// STRATA_VERIFY_PROFILE=1 - GPU stage times of the windows since the last call (ms per
     /// window), as one line; empty when off.
     std::string profile_report();
+    // Host-only request boundary: no CUDA work and no graph addresses changed.
+    void profile_reset();
+    bool profile_enabled() const { return prof_on_; }
+    int64_t profile_windows() const { return prof_windows_; }
+    int64_t profile_skipped_windows() const { return prof_skipped_windows_; }
 
 private:
     RemoteExpertOpt* remote_opt_ = nullptr;
@@ -282,7 +287,7 @@ private:
     unsigned long long* prof_ = nullptr;              // device: n_layers * kProfPer + 4 stamps
     std::vector<unsigned long long> prof_h_;
     double prof_sum_[2][kProfPer] = {};   // [GDN / QSA layers][stage]
-    int64_t prof_windows_ = 0;
+    int64_t prof_windows_ = 0, prof_skipped_windows_ = 0;
 
     const WeightTable* wt_ = nullptr;
     const ModelGeometry* g_ = nullptr;

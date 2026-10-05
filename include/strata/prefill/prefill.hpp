@@ -26,6 +26,8 @@ namespace strata::core { class PeerExperts; }
 
 namespace strata::prefill {
 
+namespace detail { class Pipeline; struct PipelineJob; }
+
 struct PrefillStats {
     int64_t tokens = 0;
     int64_t chunks = 0;
@@ -160,9 +162,13 @@ public:
 private:
     // Stage-1 pipeline: intermediate stages return after handing their chunk to
     // the direct successor. The public run() drains the chain once at prompt end.
-    bool run_impl(const int64_t* tokens, int64_t n, int64_t pos0, std::string& err);
+    bool run_impl(const int64_t* tokens, int64_t n, int64_t pos0, std::string& err,
+                  detail::Pipeline* pipeline = nullptr, size_t pipeline_stage = 0,
+                  const detail::PipelineJob* input = nullptr);
     bool drain_pipeline(std::string& err);
 
+    bool run_pipeline(const int64_t* tokens, int64_t n, int64_t pos0, std::string& err);
+    bool audit_state(int64_t n, int64_t pos0, std::string& err);
     int64_t stage_lb_ = 0, stage_le_ = -1;
     Prefill* next_ = nullptr;
     Prefill* helper_ = nullptr;         ///< set_stage_helper

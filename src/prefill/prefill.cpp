@@ -1,5 +1,9 @@
 // src/prefill/prefill.cpp - see include/strata/prefill/prefill.hpp.
 #include "strata/prefill/prefill.hpp"
+#include "strata/prefill/pipeline.hpp"
+#include "strata/prefill/audit.hpp"
+#include "strata/prefill/callback_probe.hpp"
+#include "strata/prefill/boundary_probe.hpp"
 #include "strata/core/mtp.hpp"
 #include "strata/core/progress.hpp"
 #include "strata/core/on_device.hpp"
@@ -958,6 +962,7 @@ int64_t Prefill::chunk() const { return impl_->T; }
 bool Prefill::draft_kv(core::MtpDrafter& mtp, const float* R_rows, const int32_t* next_tokens, int64_t n, int64_t cell0,
                        std::string& err) {
     Impl& m = *impl_;
+    detail::callback_probe_draft_path("draft_kv_declined");
     static const bool off = [] { const char* v = std::getenv("STRATA_MTP_BATCH"); return v != nullptr && v[0] == '0'; }();
     // A ring (KV streaming: the drafter's window, page p in slot p % n_slots over a host copy) takes the same appends
     // with its own page table and host copy, as a streamed main layer does; the cells written are those the window can
@@ -990,7 +995,7 @@ bool Prefill::draft_kv(core::MtpDrafter& mtp, const float* R_rows, const int32_t
         return false;
     // the cells the drafter's window can still reach
     const int64_t r0 = std::max<int64_t>(0, mtp.first_needed() - cell0);
-    if (r0 >= n) return true;
+    if (r0 >= n) { detail::callback_probe_draft_path("no_cells_needed"); return true; }
     // per row: emb/e2 (N), en16 (N half), hn/h2/Rm/gated (HCN), hn16/xn16 (HCN half), lo (LR) + lo16, grs, mixed (N) +
     // mixed_h, K and V (KV each), the token id
     // E-9: the drafter's Q8_0 matrices through Q8_1 x Q8_0 MMQ - its own pass's integer dot products (mmvq), so
@@ -1115,6 +1120,7 @@ bool Prefill::draft_kv(core::MtpDrafter& mtp, const float* R_rows, const int32_t
         std::fprintf(stderr, "strata draft kv: %lld cells from %lld (first needed %lld), batch %lld: drafter idle %.1f ms, "
                      "the batches %.1f ms, all %.1f ms\n", (long long) n, (long long) cell0, (long long) (cell0 + r0),
                      (long long) B, ms_idle, ms_since(tl0), ms_since(t0));
+    detail::callback_probe_draft_path(q8 ? "batched_q8" : "batched_f16");
     return true;
 }
 namespace {
@@ -1542,7 +1548,138 @@ struct PeTimer {
 };
 }  // namespace
 
-bool Prefill::run_impl(const int64_t* tokens, int64_t n, int64_t pos0, std::string& err) {
+bool Prefill::audit_state(int64_t n, int64_t pos0, std::string& err) {
+    std::array<uint8_t, detail::audit_scratch_bytes> scratch;
+    int64_t input_n = n;
+    size_t index = 0;
+    for (Prefill* stage = this; stage; stage = stage->next_, ++index) {
+        Impl& m = *stage->impl_;
+        const core::OnDevice device(m.device);
+        const core::ModelGeometry& g = *m.g;
+        const core::SessionState& ss = *m.ss;
+        const cudaError_t compute = cudaStreamSynchronize(m.cs);
+        const cudaError_t copy = cudaStreamSynchronize(m.copy);
+        if (compute != cudaSuccess || copy != cudaSuccess) {
+            err = std::string("prefill audit sync: ") + cudaGetErrorString(compute != cudaSuccess ? compute : copy);
+            return false;
+        }
+        auto hash_dev = [&](const void* data, uint64_t bytes, uint64_t& hash, uint64_t* aggregate = nullptr) {
+            if (bytes && data == nullptr) { err = "prefill audit: missing active state"; return false; }
+            return detail::audit_bytes(bytes, hash, scratch, [&](uint64_t at, uint8_t* host, size_t count) {
+                const cudaError_t status = cudaMemcpy(host, (const uint8_t*) data + at, count, cudaMemcpyDeviceToHost);
+                if (status != cudaSuccess) { err = std::string("prefill audit copy: ") + cudaGetErrorString(status); return false; }
+                return true;
+            }, aggregate);
+        };
+        const uint64_t per_gdn = ((uint64_t) g.ssm_state_size * g.ssm_v_heads * g.ssm_state_size +
+            (uint64_t) g.ssm_conv_channels * (g.ssm_d_conv - 1)) * sizeof(float);
+        uint64_t gdn_hash = detail::audit_seed, gdn_bytes = 0;
+        int64_t gdn_ordinal = 0, active_gdn = 0;
+        for (int64_t layer = 0; layer < stage->stage_le_; ++layer) {
+            if (core::is_qsa_layer(g, layer)) continue;
+            if (layer >= stage->stage_lb_) {
+                const int64_t row = gdn_ordinal - ss.gdn_ord0;
+                if (row < 0 || row >= ss.gdn_alloc || ss.gdn_state == nullptr) { err = "prefill audit: GDN row outside initialized carve"; return false; }
+                uint64_t hash = detail::audit_seed;
+                if (!hash_dev(ss.gdn_state + (size_t) row * (per_gdn / sizeof(float)), per_gdn, hash, &gdn_hash)) return false;
+                gdn_bytes += per_gdn;
+                ++active_gdn;
+                std::fprintf(stderr, "strata prefill audit: stage=%zu device=%d basepos=%lld n=%lld end=%lld kind=gdn layer=%lld ordinal=%lld bytes=%llu hash=%016llx\n",
+                    index, m.device, (long long) pos0, (long long) n, (long long) (pos0 + n),
+                    (long long) layer, (long long) gdn_ordinal, (unsigned long long) per_gdn, (unsigned long long) hash);
+            }
+            ++gdn_ordinal;
+        }
+        const bool ple_active = ss.ple.ready() && stage->stage_lb_ <= 1 && 1 < stage->stage_le_;
+        const uint64_t ple_bytes = ple_active ? (uint64_t) strata::kernels::NG_HIST * strata::kernels::NG_HC_DIM * sizeof(float) : 0;
+        uint64_t ple_hash = detail::audit_seed;
+        if (ple_active && !hash_dev(ss.ple.hist, ple_bytes, ple_hash)) return false;
+        const int64_t final_n = detail::audit_last_chunk(input_n, m.T);
+        const int64_t last_row = final_n ? final_n - 1 : -1;
+        const uint64_t residual_bytes = final_n ? (uint64_t) D * sizeof(float) : 0;
+        uint64_t residual_hash = detail::audit_seed;
+        if (final_n && !hash_dev(m.R + (size_t) last_row * D, residual_bytes, residual_hash)) return false;
+        std::fprintf(stderr, "strata prefill audit: stage=%zu device=%d basepos=%lld n=%lld end=%lld layers=%lld:%lld kind=summary gdn_layers=%lld gdn_bytes=%llu gdn_hash=%016llx ple_active=%d ple_bytes=%llu ple_hash=%016llx ple_prev=%d,%d input_n=%lld final_chunk=%lld chunk_capacity=%lld last_row=%lld residual_pos=%lld residual_bytes=%llu residual_hash=%016llx qsa=excluded coverage=gdn+active_ple+last_residual algorithm=strata-fnv1a64 copy_limit=65536\n",
+            index, m.device, (long long) pos0, (long long) n, (long long) (pos0 + n),
+            (long long) stage->stage_lb_, (long long) stage->stage_le_, (long long) active_gdn,
+            (unsigned long long) gdn_bytes, (unsigned long long) gdn_hash, ple_active ? 1 : 0,
+            (unsigned long long) ple_bytes, (unsigned long long) ple_hash, ss.ple_prev[0], ss.ple_prev[1],
+            (long long) input_n, (long long) final_n, (long long) m.T, (long long) last_row,
+            (long long) (final_n ? pos0 + n - 1 : -1), (unsigned long long) residual_bytes,
+            (unsigned long long) residual_hash);
+        input_n = final_n;
+    }
+    std::fprintf(stderr, "strata prefill audit: kind=complete stages=%zu basepos=%lld n=%lld end=%lld coverage=gdn+active_ple+last_residual qsa=excluded\n",
+        index, (long long) pos0, (long long) n, (long long) (pos0 + n));
+    return true;
+}
+
+bool Prefill::run_pipeline(const int64_t* tokens, int64_t n, int64_t pos0, std::string& err) {
+    std::vector<Prefill*> stages;
+    for (Prefill* stage = this; stage != nullptr; stage = stage->next_) {
+        if (std::find(stages.begin(), stages.end(), stage) != stages.end()) {
+            err = "prefill pipeline: cyclic stage chain"; return false;
+        }
+        stages.push_back(stage);
+        // Borrowed buffers can be relaid out to a different chunk. Keep the old
+        // path in that case: aligned chunks also preserve checkpoint boundaries.
+        if (stage->chunk() != chunk()) {
+            std::fprintf(stderr, "strata prefill pipeline: unequal stage chunks; using the original path\n");
+            return run_impl(tokens, n, pos0, err);
+        }
+    }
+    // These diagnostics own process-static scratch or write a shared dump file.
+    // Do not introduce more concurrent writers to those experimental paths.
+    for (const char* name : {"STRATA_IDX_FP16_CHECK", "STRATA_DBG_NAN", "STRATA_QSA_DUMP", "STRATA_PREFILL_DUMP_R"}) {
+        if (std::getenv(name)) {
+            err = std::string("prefill pipeline: disable incompatible diagnostic ") + name; return false;
+        }
+    }
+    const char* trace = std::getenv("STRATA_PREFILL_PIPELINE_TRACE");
+    detail::Pipeline pipeline(stages.size(), should_stop, trace && std::strcmp(trace, "1") == 0);
+    const auto started = Clock::now();
+    const double prior_ms = stats_.ms_total;
+    std::vector<const float*> previous_input;
+    for (Prefill* stage : stages) previous_input.push_back(stage->hand_in_);
+    std::fprintf(stderr, "strata prefill pipeline: %zu stages, two pinned slots per boundary, aligned chunk %lld\n",
+                 stages.size(), (long long) chunk());
+    bool ok = false;
+    try {
+        pipeline.start([&](size_t index, const detail::PipelineJob& job, std::string& e) {
+            Prefill& stage = *stages[index];
+            stage.single_chunk_ = n <= chunk();
+            stage.hand_in_ = job.rows; // only this stage's single worker writes it
+            return stage.run_impl(job.tokens, job.n, job.pos0, e, &pipeline, index, &job);
+        });
+        ok = run_impl(tokens, n, pos0, err, &pipeline);
+        if (!ok) pipeline.fail(err.empty() ? "prefill pipeline root failed" : err);
+    } catch (const std::exception& e) {
+        pipeline.fail(std::string("prefill pipeline: ") + e.what());
+    } catch (...) { pipeline.fail("prefill pipeline: unknown exception"); }
+    std::string pipeline_err;
+    ok = pipeline.finish(pipeline_err) && ok;
+    if (!pipeline_err.empty()) err = pipeline_err;
+    // An error/cancellation can leave kernels or copies enqueued. Drain after
+    // joining before pinned buffers, sessions or borrowed cache slots are reused.
+    for (size_t index = 0; index < stages.size(); ++index) {
+        Prefill& stage = *stages[index];
+        const core::OnDevice device(stage.impl_->device);
+        const cudaError_t compute = cudaStreamSynchronize(stage.impl_->cs);
+        const cudaError_t copy = cudaStreamSynchronize(stage.impl_->copy);
+        stage.hand_in_ = previous_input[index];
+        if (compute != cudaSuccess || copy != cudaSuccess) {
+            if (err.empty()) err = std::string("prefill pipeline drain: ") +
+                cudaGetErrorString(compute != cudaSuccess ? compute : copy);
+            ok = false;
+        }
+    }
+    stats_.ms_total = prior_ms + ms_since(started); // root keeps full-chain wall time
+    pipeline.event(ok ? "complete" : "failed", 0, pos0, n, impl_->device);
+    return ok;
+}
+
+bool Prefill::run_impl(const int64_t* tokens, int64_t n, int64_t pos0, std::string& err,
+                       detail::Pipeline* pipeline, size_t pipeline_stage, const detail::PipelineJob* input) {
     err.clear();
     Impl& m = *impl_;
     const core::OnDevice on_device(m.device);
@@ -1552,6 +1689,7 @@ bool Prefill::run_impl(const int64_t* tokens, int64_t n, int64_t pos0, std::stri
     const int64_t LB = stage_lb_, LE = stage_le_;
     // The direct successor's future lives on the Prefill object. Intermediate
     // stages therefore do not drain the complete remaining GPU chain here.
+    int hand_buf = 0; // queue branch slots are local; upstream futures keep hand_buf_
     double host_sync_ms = 0, host_chunk_ms = 0, host_setup_ms = 0;   // STRATA_PREFILL_TIMING: the host's share
     strata::kernels::QsaShapes s = strata::kernels::qsa_real_shapes();
     s.n_head = g.n_head; s.n_head_kv = g.n_head_kv; s.head_dim = g.head_dim; s.idx_n_head = g.idx_q_heads;
@@ -1616,9 +1754,44 @@ bool Prefill::run_impl(const int64_t* tokens, int64_t n, int64_t pos0, std::stri
     int ple_buf = 0;
 
     for (int64_t c0 = 0; c0 < n; c0 += m.T) {
-        if (should_stop && should_stop()) { err = "cancelled"; return false; }
+        if ((pipeline && pipeline->stopped()) || (should_stop && should_stop())) { err = "cancelled"; return false; }
         if (std::getenv("STRATA_TRACE")) { std::fprintf(stderr, "strata trace: prompt chunk %lld of %lld\n", (long long) c0, (long long) n); std::fflush(stderr); }
         const int64_t T = std::min(m.T, n - c0), p0 = pos0 + c0;
+        // Opt-in GDN45 boundary diagnostic, first warmup chunk only (default off: no CUDA, no I/O).
+        // It separates a bad initial state / different layer-44->45 inputs / the recurrence itself; the
+        // probe reads only, on this stage's own stream, and its runs are excluded from all timings.
+        detail::BoundaryProbe bprobe;
+        const bool bprobe_armed = detail::boundary_probe_want(LB, LE, p0);
+        int64_t bprobe_ord45 = -1;
+        if (bprobe_armed) {
+            int64_t bprobe_seen = 0;
+            for (int64_t bl = 0; bl < LE; ++bl) {
+                if (core::is_qsa_layer(g, bl)) continue;
+                if (bl == 45) bprobe_ord45 = bprobe_seen;
+                ++bprobe_seen;
+            }
+        }
+        bool bprobe_on = bprobe_armed &&
+            bprobe.start(m.device, LB, LE, p0, T, m.T, N, D, C, HV, ZV, gdn_floats,
+                         (uint64_t) g.ssm_state_size * g.ssm_v_heads * g.ssm_state_size,
+                         ss.gdn_ord0, ss.gdn_alloc, bprobe_ord45, err);
+        if (bprobe_armed && !bprobe_on) return false;   // a bad probe directory fails loudly
+        auto bprobe_capture = [&](const char* marker, const void* data, uint64_t bytes) {
+            if (!bprobe_on) return true;
+            const cudaError_t bprobe_sync = cudaStreamSynchronize(m.cs);
+            if (bprobe_sync != cudaSuccess) {
+                err = std::string("boundary probe owner stream sync: ") + cudaGetErrorString(bprobe_sync);
+                return false;
+            }
+            return bprobe.capture(marker, data, bytes, [&](const void* d, uint64_t at, uint8_t* host, size_t count) {
+                if (cudaMemcpy(host, (const uint8_t*) d + at, count, cudaMemcpyDeviceToHost) != cudaSuccess) {
+                    err = std::string("boundary probe D2H: ") + cudaGetErrorString(cudaGetLastError());
+                    return false;
+                }
+                return true;
+            }, err);
+        };
+        if (pipeline) pipeline->event("chunk_start", pipeline_stage, p0, T, m.device);
         core::progress_at("reading the prompt (batched): preparing the chunk from token", p0);   // #251
         ++stats_.chunks;
         pt.mark(kPfStart, cs);
@@ -1626,10 +1799,24 @@ bool Prefill::run_impl(const int64_t* tokens, int64_t n, int64_t pos0, std::stri
         // ---- embeddings, broadcast to the four streams - or, in a later stage of a layer split, the rows the
         // previous stage handed on
         if (hand_in_ != nullptr) {
+            if (pipeline && (input == nullptr || c0 != 0 || n > m.T)) {
+                err = "prefill pipeline: invalid input chunk"; return false;
+            }
             if (cudaMemcpyAsync(m.R, hand_in_ + (size_t) c0 * D, (size_t) T * D * 4, cudaMemcpyHostToDevice, m.cs) !=
                 cudaSuccess) {
                 err = "prefill: the layer split's hand-off upload failed";
                 return false;
+            }
+            if (pipeline) {
+                // The input host slot is independent of the downstream's output
+                // slots. Its producer can reuse it once H2D (not all layers) ends.
+                const cudaError_t copied = cudaStreamSynchronize(m.cs);
+                if (copied != cudaSuccess) {
+                    err = std::string("prefill pipeline input upload: ") + cudaGetErrorString(copied);
+                    return false;
+                }
+                pipeline->event("input_consumed", pipeline_stage, p0, T, m.device);
+                pipeline->consumed(*input);
             }
         }
         // C-4: the whole chunk's rows in one gather (the same per-element arithmetic as the per-token path, so the
@@ -2008,11 +2195,31 @@ bool Prefill::run_impl(const int64_t* tokens, int64_t n, int64_t pos0, std::stri
                     if (!native_proj(m.gemm, wg, m.mixed_h, m.z, T, v.name("attn_gate.weight"), err)) return false;
                     if (!bf16_proj(m.gemm, wa, m.mixed_bf, m.ab, T, v.name("ssm_alpha.weight"), err, 2 * HV, m.mixed_bf_lo)) return false;
                     if (!bf16_proj(m.gemm, wb, m.mixed_bf, m.ab + HV, T, v.name("ssm_beta.weight"), err, 2 * HV, m.mixed_bf_lo)) return false;
+                    if (bprobe_on && l == 45) {   // H1: the state before any layer-45 GDN kernel; H2: the dense inputs
+                        if (!bprobe_capture("l45_state_initial_before_gdn", state, gdn_floats * 4) ||
+                            !bprobe_capture("l45_mixed_f32_after_mix", m.mixed, (uint64_t) T * N * 4) ||
+                            !bprobe_capture("l45_mixed_bf16_after_mix", m.mixed_bf, (uint64_t) T * N * 2) ||
+                            !bprobe_capture("l45_mixed_f16_after_mix", m.mixed_h, (uint64_t) T * N * 2) ||
+                            !bprobe_capture("l45_qkv_after_proj", m.qkv, (uint64_t) T * C * 4) ||
+                            !bprobe_capture("l45_z_after_proj", m.z, (uint64_t) T * ZV * 4) ||
+                            !bprobe_capture("l45_ab_after_proj", m.ab, (uint64_t) T * 2 * HV * 4)) return false;
+                    }
                     pt.mark(kPfGdnConv, cs);   // "gdn" is the projections in; the rest on their own lines
                     gdn_gates(m.ab, (const float*) wdt->data, (const float*) wsa->data, m.gate, m.beta, T, m.cs);
                     gdn_conv(conv, m.qkv, (const float*) wc->data, m.hbuf, T, EPS, m.cs);
+                    if (bprobe_on && l == 45 &&   // the recurrence's actual inputs (the H2/H3 boundary)
+                        (!bprobe_capture("l45_h_after_conv", m.hbuf, (uint64_t) T * C * 4) ||
+                         !bprobe_capture("l45_gate_after_gates", m.gate, (uint64_t) T * HV * 4) ||
+                         !bprobe_capture("l45_beta_after_gates", m.beta, (uint64_t) T * HV * 4))) return false;
                     pt.mark(kPfGdnRec, cs);
                     gdn_recurrence(state, m.hbuf, m.gate, m.beta, m.z, (const float*) wnm->data, EPS, m.y, m.y_h, T, m.cs);
+                    if (bprobe_on && l == 45) {   // H3: the state and output after this first recurrence
+                        if (!bprobe_capture("l45_state_after_recurrence", state, gdn_floats * 4) ||
+                            !bprobe_capture("l45_y_f32_after_recurrence", m.y, (uint64_t) T * ZV * 4) ||
+                            !bprobe_capture("l45_y_f16_after_recurrence", m.y_h, (uint64_t) T * ZV * 2) ||
+                            !bprobe.finish(err)) return false;
+                        bprobe_on = false;   // first warmup chunk only; nothing later is captured
+                    }
                     pt.mark(kPfGdnOut, cs);
                     if (!native_proj(m.gemm, wo, m.y_h, m.bo, T, v.name("ssm_out.weight"), err)) return false;
                     ++gdn_index;
@@ -2906,6 +3113,8 @@ bool Prefill::run_impl(const int64_t* tokens, int64_t n, int64_t pos0, std::stri
                 }
                 if (half == 1 && strata::kernels::cvec().covers(l))   // --control-vector-scaled
                     strata::kernels::cvec_apply(m.R, l, T, D, nullptr, 0, nullptr, 0, false, m.cs);
+                if (bprobe_on && l == 44 && half == 1 &&   // H2: the residual entering layer 45
+                    !bprobe_capture("l44_residual_end", m.R, (uint64_t) T * D * 4)) return false;
             }
         }
         if (!ple_land()) return false;   // a stage that ends before layer 1: the rows land anyway, the next gather starts
@@ -2919,8 +3128,11 @@ bool Prefill::run_impl(const int64_t* tokens, int64_t n, int64_t pos0, std::stri
         core::progress_at("reading the prompt (batched): finishing the chunk from token", p0);
         pt.mark(kPfStart, cs);
         if (next_ != nullptr) {
-            // The current hand-off slot was used two chunks ago.
-            float* h = m.hand[hand_buf_];
+            if (pipeline && !pipeline->acquire(pipeline_stage, hand_buf)) {
+                err = pipeline->error(); return false;
+            }
+            // the rows to the host buffer the next stage read two chunks ago (it has finished: waited below)
+            float* h = m.hand[pipeline ? hand_buf : hand_buf_];
             if (cudaMemcpyAsync(h, m.R, (size_t) T * D * 4, cudaMemcpyDeviceToHost, m.cs) != cudaSuccess ||
                 cudaStreamSynchronize(m.cs) != cudaSuccess) {
                 err = std::string("prefill: the layer split's hand-off: ") + cudaGetErrorString(cudaGetLastError());
@@ -2929,6 +3141,13 @@ bool Prefill::run_impl(const int64_t* tokens, int64_t n, int64_t pos0, std::stri
             // Wait only for the DIRECT successor's previous chunk. That successor
             // may already have forwarded its older chunk to later GPUs.
             if (on_stage_chunk && !on_stage_chunk(p0 + T, err)) return false;
+            if (pipeline) {
+                const detail::PipelineJob job{tokens + c0, T, p0, h, pipeline_stage, hand_buf};
+                pipeline->event("output_ready", pipeline_stage, p0, T, m.device);
+                if (!pipeline->send(pipeline_stage + 1, job)) { err = pipeline->error(); return false; }
+                hand_buf ^= 1;
+                continue;
+            }
             if (next_run_.valid() && !next_run_.get()) { err = next_err_; return false; }
             next_err_.clear();
             next_->hand_in_ = h;
@@ -2960,13 +3179,52 @@ bool Prefill::run_impl(const int64_t* tokens, int64_t n, int64_t pos0, std::stri
             }
             const auto toc2 = Clock::now();
             if (on_stage_chunk && !on_stage_chunk(p0 + T, err)) return false;
-            if (on_chunk && !on_chunk(m.R, T, p0, err)) return false;
+            if (on_chunk) {
+                detail::CallbackProbe probe;
+                const bool probing = detail::callback_probe_enabled();
+                auto sample = [&](const char* phase) {
+                    // Only this stage owner is at this chunk. Never traverse another stage here.
+                    int device = -1;
+                    if (cudaGetDevice(&device) != cudaSuccess || device != m.device || cudaDeviceSynchronize() != cudaSuccess) {
+                        err = "callback probe: owning device sync failed"; return false;
+                    }
+                    return probe.sample(phase, [&](const void* data, uint64_t at, uint8_t* host, size_t count) {
+                        const cudaError_t status = cudaMemcpy(host, (const uint8_t*) data + at, count, cudaMemcpyDeviceToHost);
+                        if (status != cudaSuccess) { err = std::string("callback probe D2H: ") + cudaGetErrorString(status); return false; }
+                        return true;
+                    }, err);
+                };
+                if (probing) {
+                    std::vector<detail::CallbackProbeRange> ranges;
+                    int64_t ordinal = 0;
+                    for (int64_t layer = 0; layer < LE; ++layer) {
+                        if (core::is_qsa_layer(g, layer)) continue;
+                        if (layer >= LB && (layer == 45 || layer == 46)) {
+                            const int64_t row = ordinal - ss.gdn_ord0;
+                            if (!ss.gdn_state || row < 0 || row >= ss.gdn_alloc) { err = "callback probe: GDN outside initialized carve"; return false; }
+                            ranges.push_back({layer == 45 ? "gdn45" : "gdn46", layer, ordinal, row,
+                                ss.gdn_state + (size_t) row * gdn_floats, gdn_floats * sizeof(float),
+                                (uint64_t) g.ssm_state_size * g.ssm_v_heads * g.ssm_state_size});
+                        }
+                        ++ordinal;
+                    }
+                    if (T <= 0 || T > m.T || !m.R) { err = "callback probe: residual outside active chunk"; return false; }
+                    ranges.push_back({"lastR", -1, -1, T - 1, m.R + (size_t) (T - 1) * D, (uint64_t) D * sizeof(float)});
+                    if (!probe.start(m.device, LB, LE, p0, T, m.T, pipeline != nullptr, std::move(ranges), err,
+                            m.region, m.region_bytes, m.R, (uint64_t) T * D * sizeof(float)) ||
+                        !sample("before") || !sample("before_repeat")) return false;
+                }
+                const bool callback_ok = on_chunk(m.R, T, p0, err);
+                if (probing && (!sample("after") || !probe.finish(callback_ok, err))) return false;
+                if (!callback_ok) return false;
+            }
             host_sync_ms += std::chrono::duration<double, std::milli>(toc2 - toc).count();
             host_chunk_ms += ms_since(toc2);
         }
     }
     // Do not drain the successor here. This is the overlap: an intermediate
     // stage can return while later GPUs are still processing the previous chunk.
+    if (pipeline && pipeline_stage == 0 && !pipeline->finish(err)) return false;
     ss.ple_prev[0] = prev[0];
     ss.ple_prev[1] = prev[1];
     if (std::getenv("STRATA_DBG_NAN") != nullptr) {   // debug: the state the prompt leaves for the token path
@@ -3068,7 +3326,18 @@ bool Prefill::drain_pipeline(std::string& err) {
 }
 
 bool Prefill::run(const int64_t* tokens, int64_t n, int64_t pos0, std::string& err) {
-    const bool body_ok = run_impl(tokens, n, pos0, err);
+    // Reject before either dispatcher: the upstream request-end drain traverses
+    // this same chain, so a queue rejection alone would leave a cyclic drain.
+    std::vector<Prefill*> chain;
+    for (Prefill* stage = this; stage; stage = stage->next_) {
+        if (std::find(chain.begin(), chain.end(), stage) != chain.end()) {
+            err = "prefill: cyclic stage chain"; return false;
+        }
+        chain.push_back(stage);
+    }
+    const char* deep = std::getenv("STRATA_PREFILL_PIPELINE");
+    const bool body_ok = deep && std::strcmp(deep, "1") == 0 && next_ != nullptr && stage_lb_ == 0
+        ? run_pipeline(tokens, n, pos0, err) : run_impl(tokens, n, pos0, err);
 
     std::string drain_err;
     const bool drain_ok = drain_pipeline(drain_err);
@@ -3078,7 +3347,9 @@ bool Prefill::run(const int64_t* tokens, int64_t n, int64_t pos0, std::string& e
         err = drain_err;
         return false;
     }
-    return true;
+    const char* audit = std::getenv("STRATA_PREFILL_PIPELINE_AUDIT");
+    // All upstream futures / opt-in queue workers have joined before auditing.
+    return !(audit && std::strcmp(audit, "1") == 0) || audit_state(n, pos0, err);
 }
 
 }  // namespace strata::prefill

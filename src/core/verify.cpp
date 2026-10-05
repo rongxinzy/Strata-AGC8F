@@ -36,6 +36,7 @@
 #include "strata/core/progress.hpp"
 #include "strata/kernels/shared_expert.hpp"
 #include "strata/kernels/verify_kernels.hpp"
+#include "plan_trace.h"   // STRATA_VERIFY_PLAN_TRACE: host-only, default off (008)
 
 #include <algorithm>
 #include <atomic>
@@ -1173,6 +1174,12 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
     return true;
 }
 
+void Verifier::profile_reset() {
+    for (auto& r : prof_sum_) for (double& d : r) d = 0;
+    prof_windows_ = 0;
+    prof_skipped_windows_ = 0;
+}
+
 std::string Verifier::profile_report() {
     if (!prof_on_ || prof_windows_ == 0) return std::string();
     static const char* names[kProfPer] = {"-", "hc-read0", "q8+qkv/q-idx gemv", "conv", "ab", "z", "rec", "q8+kv-idx",
@@ -1194,8 +1201,7 @@ std::string Verifier::profile_report() {
     }
     std::snprintf(b, sizeof b, " | total %.2f ms/window over %lld windows", total / 1e6 / (double) prof_windows_, (long long) prof_windows_);
     out += b;
-    for (auto& r : prof_sum_) for (double& d : r) d = 0;
-    prof_windows_ = 0;
+    profile_reset();
     return out;
 }
 
@@ -1502,6 +1508,14 @@ bool Verifier::run(int T, const int32_t* tokens, int64_t pos0, PoolMultiFn pool,
             sink_.counts[2] = 0;
             sink_.start[0] = 0;
             sink_.start2[0] = 0;
+            if (plantrace::Recorder* pt = plantrace::Recorder::acquire()) {   // the no-GPU-experts case too
+                plantrace::SampleLabels lb;
+                lb.device = device_; lb.stage_first = (int) lb_; lb.stage_last = (int) le_;
+                lb.layer = (int) l; lb.T = T; lb.groups = G; lb.grp = grp; lb.cap = (int) sink_.cap;
+                lb.empty_plan = true;
+                static const int32_t z[4] = {0, 0, 0, 0};
+                pt->record(lb, z, nullptr, nullptr, nullptr, nullptr);
+            }
             std::atomic_thread_fence(std::memory_order_seq_cst);
             *(volatile uint32_t*) h_flagA_ = want;
             raise_flag(h_flagB_, want);
@@ -1538,6 +1552,8 @@ bool Verifier::run(int T, const int32_t* tokens, int64_t pos0, PoolMultiFn pool,
         cudaStreamSynchronize(copy_);   // no host function of this window may raise flag B in the next one
         copy_used_ = false;
     }
+    if (plantrace::Recorder* pt = plantrace::Recorder::acquire()) pt->flush();
+    if (prof_on_ && G != 1) ++prof_skipped_windows_;
     if (prof_on_ && G == 1) collect_profile();   // the window's GPU stage stamps
     // ---- a sampled or penalized request: the head's sampling again, host-side so its parameters are this call's
     // own (a captured kernel would replay the same draws forever).  Row t's draw is Philox(seed, pos0 + t): tied to
@@ -1634,6 +1650,31 @@ void Verifier::fetch_dma(void* ctx, const uint8_t* const* src, int n, size_t byt
 void Verifier::publish_plan(void* ctx) {
     Verifier* v = (Verifier*) ctx;
     _mm_sfence();
+    // STRATA_VERIFY_PLAN_TRACE (default off: acquire() is a null check): the pool has written this group's
+    // mapped plan and flag A has not risen yet, so counts/start/start2/dst/tok are quiescent here - the one
+    // host point where the real entries-per-group distribution is readable.  Read-only: no plan byte, flag
+    // or order changes, and a tracing run is excluded from formal timings.
+    if (plantrace::Recorder* pt = plantrace::Recorder::acquire()) {
+        const int G = v->last_batch_ ? 1 : (v->groups_[v->last_t_] > 0 ? v->groups_[v->last_t_] : 1);
+        plantrace::SampleLabels lb;
+        lb.device = v->device_;
+        lb.stage_first = (int) v->lb_;
+        lb.stage_last = (int) v->le_;
+        lb.layer = (int) (v->lb_ + v->cur_layer_ / G);   // cur_layer_ is this group's ring step - 1
+        lb.T = v->last_t_;
+        lb.groups = G;
+        lb.grp = (int) (v->cur_layer_ % G);
+        lb.cap = (int) v->sink_.cap;
+        const auto& lay = strata::kernels::cpu::expert_layout();
+        if (lay.native && lb.layer >= 0 && lb.layer < (int) v->g_->n_layers) {
+            lb.quant_gu = lay.fmt[(size_t) lb.layer].gu_type;
+            lb.quant_down = lay.fmt[(size_t) lb.layer].d_type;
+        }
+        if (v->device_plan_)
+            pt->note_excluded("device_plan");   // E-6: the device planned it; the pool plan is not what ran
+        else
+            pt->record(lb, v->sink_.counts, v->sink_.start, v->sink_.start2, v->sink_.dst, v->sink_.tok);
+    }
     *(volatile uint32_t*) v->h_flagA_ = v->cur_layer_ + 1;
 }
 
