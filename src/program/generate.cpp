@@ -5203,6 +5203,8 @@ int main(int argc, char** argv) {
         };
         auto pcie_num_of = [](double f) { return std::max(0, std::min(256, (int) (f * 256.0 + 0.5))); };
         const int n_stages = split_devs.empty() ? 1 : (int) split_at.size() + 1;
+        // EP routing is decided by drive_pool_split: keep the host doorbells on every stage before init.
+        for (int st = 0; st < n_stages; ++st) stage_ver(st).require_host_expert_dispatch(ep_l0 || ep24);
         if (n_stages > 1) {
             const size_t hb = (size_t) strata::kernels::kVerifyMaxT *
                               (size_t) strata::core::Verifier::handoff_floats(g) * sizeof(float);

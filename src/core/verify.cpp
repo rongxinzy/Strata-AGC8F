@@ -493,7 +493,7 @@ bool Verifier::init(const WeightTable& wt, const ModelGeometry& g, SessionState&
     // When true, every layer plans on device and writes directly into parts_ without any CPU doorbells,
     // wait_flag_ge spins, PCIe empty launches, or moe_hit_add copies.
     all_resident_ = false;
-    if (hits.h_res != nullptr && hits.d_res != nullptr && hits.cache_base != nullptr) {
+    if (!host_expert_dispatch_ && hits.h_res != nullptr && hits.d_res != nullptr && hits.cache_base != nullptr) {
         const char* v_ar = std::getenv("STRATA_VERIFY_ALL_RESIDENT");
         if (v_ar == nullptr || std::atoi(v_ar) != 0) {
             bool all_ok = true;
@@ -512,7 +512,7 @@ bool Verifier::init(const WeightTable& wt, const ModelGeometry& g, SessionState&
     // exact, but neutral on RIBPC 1-2 GPUs: off by default)
     {
         const char* v = std::getenv("STRATA_VERIFY_DEVICE_PLAN");
-        device_plan_ = !all_resident_ && (v != nullptr && std::atoi(v) != 0);
+        device_plan_ = !host_expert_dispatch_ && !all_resident_ && (v != nullptr && std::atoi(v) != 0);
     }
     if (all_resident_ || device_plan_) {
         bool ok2 = true;
