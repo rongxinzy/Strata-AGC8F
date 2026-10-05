@@ -207,4 +207,25 @@ bool NativeDense::load(const std::vector<std::string>& shards, WeightTable& tabl
         return false;
     }
 }
+bool NativeDense::reset(std::string& err) {
+    cudaError_t first = cudaSuccess;
+    auto release = [&](void* p) {
+        if (!p) return;
+        const cudaError_t e = cudaFree(p);
+        if (first == cudaSuccess && e != cudaSuccess) first = e;
+    };
+    release(scratch_);
+    scratch_ = nullptr;
+    for (void* p : weights_) release(p);
+    weights_.clear();
+    bytes_ = 0;
+    // The old WeightRefs' native_data/native_q8_1 pointers are NOT touched: they belong to the caller's
+    // table, which the caller replaces next (see the ordering note on the declaration). Freeing here
+    // happens only when nothing references the pointers - boot-time scoping, before any graph exists.
+    if (first != cudaSuccess) {
+        err = std::string("native dense reset: ") + cudaGetErrorString(first);
+        return false;
+    }
+    return true;
+}
 } // namespace strata::core
