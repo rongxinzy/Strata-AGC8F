@@ -90,6 +90,15 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/CMakeLists.txt AND EXISTS ${CMAKE_CU
   set(_strata_tests_default ON)
 endif()
 option(STRATA_BUILD_TESTS "Build the test suite" ${_strata_tests_default})
+option(STRATA_BUILD_AGC8F_TESTS "Build host-only AGC8F queue and audit regressions" OFF)
+if(STRATA_BUILD_AGC8F_TESTS)
+  enable_testing()
+  # iteration 012: the ownership rule behind the opt-in STRATA_STAGE_DENSE_SCOPE layer-split scoping -
+  # host-only (no CUDA, no engine objects), the one rule generate.cpp and NativeDense::load share
+  add_executable(stage_dense_scope_test tools/test_stage_dense_scope.cpp)
+  target_include_directories(stage_dense_scope_test PRIVATE include)
+  add_test(NAME stage_dense_scope_test COMMAND stage_dense_scope_test)
+endif()
 option(STRATA_BUILD_CONVERSATION_TESTS "Build standalone conversation cache tests" OFF)
 option(STRATA_WERROR "Treat compiler warnings as errors" OFF)
 
@@ -940,6 +949,52 @@ else()
 endif()
 find_package(Threads REQUIRED)
 target_link_libraries(strata_kernels_cpu PUBLIC Threads::Threads)
+
+if(STRATA_BUILD_AGC8F_TESTS)
+  # Host queue/slot lifetime regressions. These do not validate CUDA kernels.
+  foreach(_test prefill_pipeline prefill_audit mtp_prefill_audit)
+    add_executable(${_test}_test tools/test_${_test}.cpp)
+    target_include_directories(${_test}_test PRIVATE include)
+    target_link_libraries(${_test}_test PRIVATE Threads::Threads)
+    # The regressions use assertions, including checked operations, in Release too.
+    if(MSVC)
+      target_compile_options(${_test}_test PRIVATE /UNDEBUG)
+    else()
+      target_compile_options(${_test}_test PRIVATE -UNDEBUG)
+    endif()
+    add_test(NAME ${_test}_test COMMAND ${_test}_test)
+    set_tests_properties(${_test}_test PROPERTIES TIMEOUT 30)
+  endforeach()
+  if(UNIX)
+    add_executable(callback_probe_test tools/test_callback_probe.cpp)
+    target_include_directories(callback_probe_test PRIVATE include)
+    target_link_libraries(callback_probe_test PRIVATE Threads::Threads)
+    target_compile_options(callback_probe_test PRIVATE -UNDEBUG)
+    add_executable(boundary_probe_test tools/test_boundary_probe.cpp)
+    target_include_directories(boundary_probe_test PRIVATE include)
+    target_link_libraries(boundary_probe_test PRIVATE Threads::Threads)
+    target_compile_options(boundary_probe_test PRIVATE -UNDEBUG)
+    foreach(_mode disabled claim missing existing badmarker duplicate readfail incomplete rawnone rawall happy)
+      add_test(NAME boundary_probe_${_mode}
+        COMMAND boundary_probe_test ${_mode} ${CMAKE_CURRENT_BINARY_DIR}/boundary-probe-${_mode})
+      set_tests_properties(boundary_probe_${_mode} PROPERTIES TIMEOUT 30)
+    endforeach()
+    add_executable(plan_trace_test tools/test_plan_trace.cpp)
+    target_include_directories(plan_trace_test PRIVATE src/core)
+    target_link_libraries(plan_trace_test PRIVATE Threads::Threads)
+    target_compile_options(plan_trace_test PRIVATE -UNDEBUG)
+    foreach(_mode disabled happy reserved invalid_total invalid_offset invalid_range)
+      add_test(NAME plan_trace_${_mode}
+        COMMAND plan_trace_test ${_mode} ${CMAKE_CURRENT_BINARY_DIR}/plan-trace-${_mode})
+      set_tests_properties(plan_trace_${_mode} PROPERTIES TIMEOUT 30)
+    endforeach()
+    foreach(_mode disabled missing existing failure normal)
+      add_test(NAME callback_probe_${_mode}
+        COMMAND callback_probe_test ${_mode} ${CMAKE_CURRENT_BINARY_DIR}/callback-probe-${_mode})
+      set_tests_properties(callback_probe_${_mode} PROPERTIES TIMEOUT 30)
+    endforeach()
+  endif()
+endif()
 
 # ---- plan v0.3 P6: the i-quant models' CPU experts (IQ2_XS / IQ3_XXS files) ----
 #

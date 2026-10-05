@@ -1,3 +1,5 @@
+> **Strata-AGC8F**: RongxinZY 的 agc8f 实验分支。源码优化、实测结果与验收边界见 [AGC8F 文档](docs/AGC8F.md)。原上游说明保留如下。
+
 <h1 align="center">Strata</h1>
 
 **English** · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Español](README.es.md) · [Português](README.pt-BR.md)

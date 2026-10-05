@@ -1,5 +1,24 @@
 # AGENTS.md
 
+## AGC8F fork
+
+This fork targets RongxinZY's agc8f (8 RTX 4060 Ti 16GB, Hygon AVX2 CPU,
+125GiB RAM, shared PCIe4 x8 CPU uplink). See [docs/AGC8F.md](docs/AGC8F.md)
+for source provenance, measured results and limitations. Keep upstream attribution
+and the MIT license. `main` preserves upstream; `agc8f` holds device-validated changes.
+
+- New optimized paths are opt-in until device validation supports enabling them.
+- Keep measured IQ3_S main/MTP weights and FP16 KV fixed. Do not remove experts,
+  PLE or change model/quantization to obtain speed numbers.
+- Preserve raw performance and numerical diagnostics separately; profile/audit
+  runs are excluded from formal timings. Host tests do not prove CUDA correctness.
+- The five-item sanity set has a known arithmetic failure. Retain it and all
+  text/state differences; do not present runtime diagnostics as quality rankings.
+- Use isolated builds/results and owned PID identity checks; do not stop unrelated
+  services or change drivers, system clock, power limits or PCIe ACS configuration.
+- `STRATA_BUILD_AGC8F_TESTS=ON` enables standalone host regression targets without
+  requiring the unpublished upstream full test tree.
+
 Strata runs the Qwen3.8-Flash-Next mixture-of-experts model (and its Coder, Swift 1.5 and Unsloth variants) on a
 normal PC: one NVIDIA or AMD graphics card plus system RAM, on Windows or Linux. It has a C++/CUDA/HIP engine
 (`src/`, `include/`), a Python server with an OpenAI- and Anthropic-compatible API and a web app (`serve/`), and a
