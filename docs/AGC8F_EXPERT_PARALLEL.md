@@ -11,15 +11,18 @@ Its independent sm89 build SHA-256 is
 The complete build passed 26 CTest checks. The targeted publication test, linked
 against its production CUDA library, passed 320 cases including consecutive
 inputs and the unchanged OFF resident control. Independent raw review passed.
-Real-model validation of this fix is running; no new speed result is accepted.
+The fresh real-model OFF/ON smoke passed all eight corresponding text, output
+count and draft-count comparisons, with all 72 helper-layer pairs active. QA
+remains 4/5 (the existing arithmetic failure). The four-boot performance matrix
+is next; no new speed result is accepted.
 
 The preceding build's representative expert-chain CUDA
 validation completed 56 cases over seven actual quantization pairs, including
 42 active EP and 14 local-fallback cases. The raw checker passed 336 full-output
 byte comparisons and 252 one-shot helper API rejection/recovery suites.
 Independent raw acceptance confirmed all 2,241 files and 663,000,972 bytes
-against the device artifacts. Current-model activity, lifecycle and performance
-validation are in progress. These results do not establish full-model state or
+against the device artifacts. Current-model activity and the narrow trajectory check passed. Lifecycle and
+performance validation remain pending for this build. These results do not establish full-model state or
 logit equivalence, sticky CUDA-error recovery, or a current speed advantage.
 
 The host CI includes remote resource lifetime, rank dispatch, pending-result
