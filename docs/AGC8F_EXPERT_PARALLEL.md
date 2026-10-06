@@ -2,13 +2,18 @@
 
 `feature/agc8f-expert-parallel` carries opt-in EP24 on upstream
 `6f32ec070f23ced9f50e704d854d775da52591ab`. EP is **off by default**.
-The current engine source is `fe6fb61484591eb8a5467af116cff7732e134789`;
-its independent sm89 build SHA-256 is
-`86ffaa5b41acbff72c53078459f3f2d595fc2cfc6e1565c4afd93ff742b786c0`.
+The current source includes the fresh-activation publication fix over `fe6fb61`.
+Its independent sm89 build SHA-256 is
+`6a5489b45d032e216cbc4e9f205709ffecf9a7005255887ca87e32a95e94bd64`.
 
 ## Current validation status
 
-The complete build passed 26 CTest checks. Representative expert-chain CUDA
+The complete build passed 26 CTest checks. The targeted publication test, linked
+against its production CUDA library, passed 320 cases including consecutive
+inputs and the unchanged OFF resident control. Independent raw review passed.
+Real-model validation of this fix is running; no new speed result is accepted.
+
+The preceding build's representative expert-chain CUDA
 validation completed 56 cases over seven actual quantization pairs, including
 42 active EP and 14 local-fallback cases. The raw checker passed 336 full-output
 byte comparisons and 252 one-shot helper API rejection/recovery suites.
@@ -18,7 +23,8 @@ validation are in progress. These results do not establish full-model state or
 logit equivalence, sticky CUDA-error recovery, or a current speed advantage.
 
 The host CI includes remote resource lifetime, rank dispatch, pending-result
-drain, prefill failure flow and verifier host-policy regressions. Its dependency
+drain, prefill failure flow, verifier host-policy and activation-publication
+regressions. Its dependency
 stubs do not execute CUDA graphs or model mathematics.
 
 ## Why the upstream integration needs a dispatch policy
@@ -32,7 +38,11 @@ The current repair requests host expert dispatch before every EP verifier is
 initialized. It disables both all-resident and device-plan bypasses for EP.
 OFF retains upstream's default all-resident path. ON uses host plans on all
 48 layers and runs remote experts on the 24 selected layers. Thus ON pays a
-host scheduling cost that the current OFF baseline avoids. Historical gains
+host scheduling cost that the current OFF baseline avoids. The resident publication API previously skipped copying host activations even
+though EP helpers needed them. EP now passes null residency to that API, forcing
+publication of the current activation; expert arithmetic is unchanged. The
+preceding model smoke exposed stale-input output differences and failed.
+Historical gains
 cannot be carried forward or established by disabling the default path in OFF.
 
 ## Supported configuration

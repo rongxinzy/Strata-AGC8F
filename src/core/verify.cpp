@@ -955,7 +955,9 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
                 doorbell_publish(xm, ids_ + tb * K, w_ + tb * K, (int64_t) n * N, (int64_t) n * K, m_x_ + tb * N,
                                  m_ids_ + tb * K, m_w_ + tb * K, m_seq_, cs);
             else {
-                const int32_t* layer_res = hits_.d_res != nullptr ? (hits_.d_res + l * g.n_expert) : nullptr;
+                // EP reassigns resident entries to helpers that consume the current host activation.
+                const int32_t* layer_res = !host_expert_dispatch_ && hits_.d_res != nullptr
+                                             ? (hits_.d_res + l * g.n_expert) : nullptr;
                 doorbell_publish_res(xm, ids_ + tb * K, layer_res, (int) g.n_expert, (int64_t) n * N, (int64_t) n * K,
                                      m_x_ + tb * N, m_ids_ + tb * K, m_seq_, cs);
             }

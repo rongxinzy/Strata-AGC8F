@@ -22,3 +22,4 @@ jobs:
           python3 tools/agc8f/test_ep_dispatch.py
           python3 tools/agc8f/test_ep_prefill_flow.py
           python3 tools/agc8f/test_ep_host_policy.py
+          python3 tools/agc8f/test_ep_publication.py
