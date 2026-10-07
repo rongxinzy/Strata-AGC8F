@@ -371,6 +371,7 @@ class Event:
 THINK_END = "</think>"
 CALL_START = "<tool_call>"
 CALL_END = "</tool_call>"
+FUNC_START = "<function="
 
 
 PARAM_END = "</parameter>"
@@ -475,7 +476,51 @@ class OutputParser:
         # character; other types whole, once complete) - before the final "tool_call".  Without it, a client sees
         # nothing until the call is complete, which for a large file write can be many minutes.
         self.stream_tools = stream_tools
+        # Quoted examples in the answer are text, never calls. Track only content: reasoning keeps its
+        # existing semantics and tool argument values are parsed by the call scanner, not as Markdown.
+        self.fence, self.line, self.ticks = "", "", 0
         self._reset_scan()
+
+    def _code_line(self, line: str, complete: bool = True) -> tuple[str, int]:
+        """Markdown code state after a line (or its prefix). Keep delimiter lengths, including `` spans.
+        A fence closes only on a complete line, with a matching fence at least as long and no trailing text."""
+        fence, ticks = self.fence, self.ticks
+        s = line.lstrip()
+        if fence:
+            closer = r" {0,3}" + re.escape(fence[0]) + "{" + str(len(fence)) + ",}[ \\t\\r]*"
+            if complete and re.fullmatch(closer, line):
+                fence = ""
+            return fence, ticks
+        opener = re.match(r" {0,3}(`{3,}|~{3,})(.*)$", line)
+        if opener and not ticks and (opener[1][0] == "~" or "`" not in opener[2]):
+            return opener[1], 0
+        if complete and not s:
+            return "", 0                       # a blank line ends the inline-code paragraph
+        for m in re.finditer(r"`+", line):
+            n = len(m[0])
+            if ticks:
+                if ticks == n:
+                    ticks = 0
+            else:
+                j = m.start()
+                while j > 0 and line[j - 1] == "\\":
+                    j -= 1
+                if (m.start() - j) % 2 == 0:    # backslash escapes only apply outside inline code
+                    ticks = n
+        return "", ticks
+
+    def _track(self, text: str) -> str:
+        """Track consumed content across arbitrary delta boundaries; return it unchanged."""
+        parts = text.split("\n")
+        for part in parts[:-1]:
+            self.fence, self.ticks = self._code_line(self.line + part)
+            self.line = ""
+        self.line += parts[-1]
+        return text
+
+    def _in_code(self) -> bool:
+        fence, ticks = self._code_line(self.line, complete=False)
+        return bool(fence or ticks)
 
     def _reset_scan(self):
         self.sp = 0                  # how much of self.buf (the call body) the scanner has consumed
@@ -616,6 +661,7 @@ class OutputParser:
             elif self.state == "content":
                 if self.lead:                                   # newlines right after </think> or a call
                     stripped = self.buf.lstrip("\n")
+                    self._track(self.buf[:len(self.buf) - len(stripped)])
                     if not stripped:
                         self.buf = ""
                         return out
@@ -628,9 +674,31 @@ class OutputParser:
                     while j > 0 and self.buf[j - 1] == "\n":
                         j -= 1
                     if j > 0:
-                        out.append(Event("content", self.buf[:j]))
+                        out.append(Event("content", self._track(self.buf[:j])))
                         self.buf = self.buf[j:]
                     return out
+                # The text before an opener decides whether it is quoted, including fences/backtick runs
+                # split between deltas. Do not commit the lookahead until that prefix is consumed.
+                snap = (self.fence, self.line, self.ticks)
+                self._track(self.buf[:i])
+                in_code = self._in_code()
+                self.fence, self.line, self.ticks = snap
+                after = self.buf[i + len(CALL_START):].lstrip()
+                if in_code or (after and not after.startswith(FUNC_START) and not FUNC_START.startswith(after)):
+                    out.append(Event("content", self._track(self.buf[:i + len(CALL_START)])))
+                    self.buf = self.buf[i + len(CALL_START):]
+                    continue
+                # Mentioning a <tool_call> block is prose unless its next non-space text is <function=.
+                # Wait for a split follower rather than entering the call scanner prematurely.
+                if not after.startswith(FUNC_START):
+                    j = i
+                    while j > 0 and self.buf[j - 1] == "\n":
+                        j -= 1
+                    if j > 0:
+                        out.append(Event("content", self._track(self.buf[:j])))
+                        self.buf = self.buf[j:]
+                    return out
+                self._track(self.buf[:i])        # track even the separator newlines omitted from the API text
                 if i and self.buf[:i].strip():
                     out.append(Event("content", self.buf[:i].rstrip("\n")))
                 self.buf = self.buf[i + len(CALL_START):]

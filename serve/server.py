@@ -504,12 +504,15 @@ class StrataEngine:
         self.slot_held: list[list[int]] = [[] for _ in range(self.batch)]
         self.slot_used = [0.0] * self.batch
         self.slot_live: list[dict | None] = [None] * self.batch   # /metrics: the request in each slot
-        self.slot_cv = threading.Condition()
-        self.waiting = 0                                # requests waiting for the control lines (ctl)
-        self.wait_lens: list[list[int]] = []            # ... their prompt lengths (a long read gives way to short ones)
-        self.ctl_epoch = 0                              # how often the control lines were taken
+        # #1012: admission state belongs to the server: restart() runs this while requests may still wait on it.
+        # Keep their condition, lock and bookkeeping; the queues and slot contents above belong to the new process.
+        if "slot_cv" not in self.__dict__:
+            self.slot_cv = threading.Condition()
+            self.waiting = 0                            # requests waiting for the control lines (ctl)
+            self.wait_lens: list[list[int]] = []        # ... their prompt lengths (a long read gives way to short ones)
+            self.ctl_epoch = 0                          # how often the control lines were taken
+            self.ctl = threading.Lock()                 # one admission or solo request on the control lines at a time
         self._yielded = None                            # (slot, tokens read): the last request on them gave way
-        self.ctl = threading.Lock()                     # one admission or solo request on the control lines at a time
         self.wlock = threading.Lock()                   # stdin writes from several request threads
         self.pump = threading.Thread(target=self._pump, daemon=True)
         self.pump.start()
