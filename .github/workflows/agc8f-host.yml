@@ -3,6 +3,18 @@ on: [push, pull_request]
 permissions:
   contents: read
 jobs:
+  service:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install service test dependencies
+        # Runtime pins from requirements.txt; jsonschema is the optional structured-output validator.
+        run: python -m pip install jinja2==3.1.6 markupsafe==3.0.3 regex==2026.9.10 jsonschema==4.25.1
+      - name: Service regressions (mock engines, no GPU)
+        run: python -m unittest discover -s serve -t . -p 'test_*.py'
   host:
     runs-on: ubuntu-latest
     steps:

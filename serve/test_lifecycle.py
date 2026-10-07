@@ -2,6 +2,7 @@
 import json
 import io
 import subprocess
+import threading
 import time
 import unittest
 import urllib.error
@@ -42,6 +43,88 @@ class ResidentEngine(StrataEngine):
 
     def generate(self, *args, **kwargs):
         yield from self.reply.generate(*args, **kwargs)
+
+
+class RestartAdmissionState(unittest.TestCase):
+    """Restart the real wrapper with in-memory pipes; no engine process or GPU is started."""
+
+    def setUp(self):
+        def process(*args, **kwargs):
+            proc = mock.Mock()
+            proc.stdin = io.StringIO()
+            proc.stdout = io.StringIO("INFO batch_slots=2\nREADY 4096 stop\n")
+            proc.poll.return_value = None
+            proc.wait.side_effect = lambda **kw: setattr(proc.poll, "return_value", 0)
+            return proc
+        for patch in (mock.patch("serve.server.subprocess.Popen", side_effect=process),
+                      mock.patch("serve.server.contain"), mock.patch("serve.server.threading.Thread")):
+            patch.start()
+            self.addCleanup(patch.stop)
+        self.engine = StrataEngine("missing-executable", ["--batch", "2"])
+        self.addCleanup(self.engine.close)
+
+    def test_restart_keeps_admission_state_but_resets_process_state(self):
+        engine = self.engine
+        cv, ctl, wait_lens = engine.slot_cv, engine.ctl, engine.wait_lens
+        engine.waiting = 2
+        wait_lens.extend([[64], [256]])
+        engine.ctl_epoch = 7
+        engine._yielded = (1, 32)
+        engine.slot_busy[1] = True
+        engine.slot_held[1] = [10, 20]
+        engine.slot_used[1] = 123.0
+        engine.slot_live[1] = {"state": "decoding"}
+        engine.lines.put("old control line")
+        engine.slot_q[1].put("old slot line")
+        proc, lines, slot_q, wlock = engine.proc, engine.lines, engine.slot_q, engine.wlock
+        with ctl:
+            engine.restart()
+            self.assertIs(engine.slot_cv, cv)
+            self.assertIs(engine.ctl, ctl)
+            self.assertTrue(engine.ctl.locked())
+        self.assertIs(engine.wait_lens, wait_lens)
+        self.assertEqual(engine.waiting, 2)
+        self.assertEqual(engine.wait_lens, [[64], [256]])
+        self.assertEqual(engine.ctl_epoch, 7)
+        self.assertIsNot(engine.proc, proc)
+        self.assertIsNot(engine.lines, lines)
+        self.assertTrue(engine.lines.empty())
+        self.assertIsNot(engine.slot_q, slot_q)
+        for new, old in zip(engine.slot_q, slot_q):
+            self.assertIsNot(new, old)
+            self.assertTrue(new.empty())
+        self.assertEqual(engine.slot_busy, [False, False])
+        self.assertEqual(engine.slot_held, [[], []])
+        self.assertEqual(engine.slot_used, [0.0, 0.0])
+        self.assertEqual(engine.slot_live, [None, None])
+        self.assertIsNone(engine._yielded)
+        self.assertIsNot(engine.wlock, wlock)
+        self.assertTrue(engine.alive())
+
+    def test_waiter_resumes_after_restart_without_losing_its_entry(self):
+        engine = self.engine
+        ctl = engine.ctl
+        engine.ctl_epoch = 7
+        waiter = engine._take_control(threading.Event(), 128)
+        try:
+            with ctl:
+                # Stop at a real heartbeat while the control lock is held; no racing test threads or long sleep.
+                with mock.patch("serve.server.time.monotonic", side_effect=[0.0, 10.0, 10.0]):
+                    self.assertIsNone(next(waiter))
+                self.assertEqual(engine.waiting, 1)
+                self.assertEqual(engine.wait_lens, [[128]])
+                engine.restart()
+            with self.assertRaises(StopIteration) as done:
+                next(waiter)
+            self.assertTrue(done.exception.value)
+            self.assertTrue(engine.ctl.locked())
+            self.assertEqual(engine.waiting, 0)
+            self.assertEqual(engine.wait_lens, [])
+            self.assertEqual(engine.ctl_epoch, 8)
+        finally:
+            waiter.close()
+            if engine.ctl.locked():
+                engine.ctl.release()
 
 
 class Lifecycle(unittest.TestCase):
