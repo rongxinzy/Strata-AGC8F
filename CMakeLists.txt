@@ -58,6 +58,11 @@ option(STRATA_BUILD_TESTS "Build the test suite" ${_strata_tests_default})
 option(STRATA_BUILD_AGC8F_TESTS "Build host-only AGC8F queue and audit regressions" OFF)
 if(STRATA_BUILD_AGC8F_TESTS)
   enable_testing()
+  # iteration 012: the ownership rule behind the opt-in STRATA_STAGE_DENSE_SCOPE layer-split scoping -
+  # host-only (no CUDA, no engine objects), the one rule generate.cpp and NativeDense::load share
+  add_executable(stage_dense_scope_test tools/test_stage_dense_scope.cpp)
+  target_include_directories(stage_dense_scope_test PRIVATE include)
+  add_test(NAME stage_dense_scope_test COMMAND stage_dense_scope_test)
 endif()
 option(STRATA_BUILD_CONVERSATION_TESTS "Build standalone conversation cache tests" OFF)
 option(STRATA_WERROR "Treat compiler warnings as errors" OFF)

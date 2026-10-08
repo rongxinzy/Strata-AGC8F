@@ -1,5 +1,6 @@
 #include "strata/core/native_dense.hpp"
 #include "strata/core/weights.hpp"
+#include "strata/core/stage_dense_scope.hpp"
 #include "strata/artifact/gguf_reader.hpp"
 #include "strata/kernels/native_mmvq.hpp"
 
@@ -69,7 +70,7 @@ NativeDense::~NativeDense() {
 }
 
 bool NativeDense::load(const std::vector<std::string>& shards, WeightTable& table, std::string& err,
-                       bool include_ple_key) {
+                       bool include_ple_key, int64_t scope_lb, int64_t scope_le) {
     if (scratch_ || !weights_.empty()) { err = "native dense: already loaded"; return false; }
     if (shards.empty()) { err = "native dense: at least one GGUF shard is required"; return false; }
     try {
@@ -139,6 +140,10 @@ bool NativeDense::load(const std::vector<std::string>& shards, WeightTable& tabl
             }
             for (const auto& tensor : gguf.tensors()) {
                 if (!eligible(tensor, include_ple_key)) continue;
+                // stage scope: decided here, acted on only after every check below (duplicate, table
+                // presence, shape) has still run for an unowned layer, so a scoped stage's table and
+                // shards stay exactly as validated as a full stage's
+                const bool scoped_out = !strata::core::dense_scope_owned(tensor.name, scope_lb, scope_le);
                 if (!seen.insert(tensor.name).second) {
                     err = "native dense: duplicate tensor " + tensor.name; return false;
                 }
@@ -158,6 +163,7 @@ bool NativeDense::load(const std::vector<std::string>& shards, WeightTable& tabl
                 }
                 const auto bytes = strata::kernels::native_mmvq_weight_bytes(
                     tensor.type, (int) ref.ne0, (int) ref.ne1);
+                if (scoped_out) continue;   // validated, metadata kept, no cudaMalloc and no upload
                 void* allocation = nullptr;
                 auto status = cudaMalloc(&allocation, bytes);
                 DevicePtr data(allocation);
@@ -191,5 +197,27 @@ bool NativeDense::load(const std::vector<std::string>& shards, WeightTable& tabl
         err = std::string("native dense: ") + error.what();
         return false;
     }
+}
+
+bool NativeDense::reset(std::string& err) {
+    cudaError_t first = cudaSuccess;
+    auto release = [&](void* p) {
+        if (!p) return;
+        const cudaError_t e = cudaFree(p);
+        if (first == cudaSuccess && e != cudaSuccess) first = e;
+    };
+    release(scratch_);
+    scratch_ = nullptr;
+    for (void* p : weights_) release(p);
+    weights_.clear();
+    bytes_ = 0;
+    // The old WeightRefs' native_data/native_q8_1 pointers are NOT touched: they belong to the caller's
+    // table, which the caller replaces next (see the ordering note on the declaration). Freeing here
+    // happens only when nothing references the pointers - boot-time scoping, before any graph exists.
+    if (first != cudaSuccess) {
+        err = std::string("native dense reset: ") + cudaGetErrorString(first);
+        return false;
+    }
+    return true;
 }
 } // namespace strata::core
